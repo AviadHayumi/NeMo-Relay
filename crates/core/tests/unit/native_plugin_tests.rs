@@ -2358,6 +2358,96 @@ fn native_continuation_context_observation(
 }
 
 #[test]
+fn thread_active_event_applies_only_at_the_captured_stack_top() {
+    let _restore = ThreadScopeStackRestore::capture();
+    let callback_stack = create_scope_stack();
+    let same_lineage_stack =
+        crate::api::runtime::scope_stack::snapshot_scope_stack(&callback_stack).unwrap();
+    set_thread_scope_stack(callback_stack);
+    let managed_event_uuid = uuid::Uuid::now_v7();
+    let assert_parent = |active_event, expected_parent| {
+        assert_eq!(active_event_uuid(), active_event);
+        assert_eq!(
+            crate::api::shared::resolve_parent_uuid(None),
+            Some(expected_parent)
+        );
+        assert_eq!(
+            crate::api::runtime::capture_propagation_context()
+                .unwrap()
+                .parent_uuid,
+            expected_parent
+        );
+    };
+    let nested = ScopeHandle::builder()
+        .name("nested")
+        .scope_type(ScopeType::Custom)
+        .build();
+    let nested_uuid = nested.uuid;
+    Runtime::new()
+        .unwrap()
+        .block_on(with_active_event_uuid(managed_event_uuid, async {
+            sync_thread_active_event();
+            crate::api::runtime::task_scope_push(nested);
+            // Re-entering another native callback must not move the managed
+            // event's anchor past a scope opened by the first callback.
+            sync_thread_active_event();
+        }));
+
+    assert_parent(None, nested_uuid);
+    crate::api::runtime::task_scope_remove(&nested_uuid).unwrap();
+    assert_parent(Some(managed_event_uuid), managed_event_uuid);
+
+    let same_lineage_top_uuid = same_lineage_stack
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+        .top()
+        .uuid;
+    set_thread_scope_stack(same_lineage_stack);
+    assert_parent(None, same_lineage_top_uuid);
+}
+
+#[test]
+fn restored_thread_active_event_rebases_after_its_stack_anchor_closes() {
+    let _restore = ThreadScopeStackRestore::capture();
+    set_thread_scope_stack(create_scope_stack());
+    let callback_parent = ScopeHandle::builder()
+        .name("callback-parent")
+        .scope_type(ScopeType::Custom)
+        .build();
+    let callback_parent_uuid = callback_parent.uuid;
+    crate::api::runtime::task_scope_push(callback_parent);
+    let managed_event_uuid = uuid::Uuid::now_v7();
+    let callback_binding =
+        Runtime::new()
+            .unwrap()
+            .block_on(with_active_event_uuid(managed_event_uuid, async {
+                sync_thread_active_event();
+                capture_thread_scope_stack()
+            }));
+
+    crate::api::runtime::task_scope_remove(&callback_parent_uuid).unwrap();
+    restore_thread_scope_stack(callback_binding);
+    assert_eq!(active_event_uuid(), Some(managed_event_uuid));
+    assert_eq!(
+        crate::api::shared::resolve_parent_uuid(None),
+        Some(managed_event_uuid)
+    );
+
+    let nested = ScopeHandle::builder()
+        .name("nested")
+        .scope_type(ScopeType::Custom)
+        .build();
+    let nested_uuid = nested.uuid;
+    crate::api::runtime::task_scope_push(nested);
+    assert_eq!(active_event_uuid(), None);
+    assert_eq!(
+        crate::api::shared::resolve_parent_uuid(None),
+        Some(nested_uuid)
+    );
+    crate::api::runtime::task_scope_remove(&nested_uuid).unwrap();
+}
+
+#[test]
 fn native_async_next_preserves_runtime_context_for_unary_and_stream_continuations() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

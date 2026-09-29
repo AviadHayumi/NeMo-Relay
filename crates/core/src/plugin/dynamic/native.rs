@@ -38,7 +38,7 @@ use crate::api::runtime::{
 use crate::api::runtime::{
     ScopeStackHandle, ThreadScopeStackBinding, capture_thread_scope_stack, create_scope_stack,
     current_scope_stack, restore_thread_scope_stack, scope_stack_active, set_thread_scope_stack,
-    sync_thread_scope_stack, with_scope_stack,
+    sync_thread_active_event, sync_thread_scope_stack, with_scope_stack,
 };
 use crate::api::scope::{
     EmitMarkEventParams, PopScopeParams, PushScopeParams, ScopeAttributes, ScopeHandle, ScopeType,
@@ -2085,6 +2085,7 @@ async fn invoke_native_async_callback(
     // SDK can capture it before moving the future to its own executor.
     let previous_thread_stack = capture_thread_scope_stack();
     sync_thread_scope_stack(current_scope_stack());
+    sync_thread_active_event();
     let state = catch_unwind(AssertUnwindSafe(|| unsafe {
         cb(
             user_data.ptr,
@@ -3800,6 +3801,7 @@ fn wrap_native_incremental_llm_stream_execution_with_user_data(
                 let stream_ref = Arc::into_raw(stream.clone());
                 let previous_thread_stack = capture_thread_scope_stack();
                 sync_thread_scope_stack(current_scope_stack());
+                sync_thread_active_event();
                 let state = catch_unwind(AssertUnwindSafe(|| unsafe {
                     cb(
                         user_data.ptr,

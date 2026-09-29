@@ -8,7 +8,7 @@
 //! can use this module to inspect the active scope chain or propagate scope
 //! context into worker threads.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::{Arc, RwLock};
@@ -544,14 +544,24 @@ impl Default for ScopeStack {
 /// concurrent readers.
 pub type ScopeStackHandle = Arc<RwLock<ScopeStack>>;
 
+#[derive(Clone, Copy)]
+struct ActiveEventBinding {
+    uuid: Uuid,
+    // Propagated stacks may share a root UUID, so identify the captured Arc allocation.
+    scope_stack_id: usize,
+    scope_stack_top: Uuid,
+}
+
 /// Captured thread-local scope stack binding.
 ///
-/// This preserves both the visible scope stack handle and whether it was
-/// explicitly installed on the current thread.
+/// This preserves the visible scope stack handle, whether it was explicitly
+/// installed on the current thread, and any managed event bound at capture
+/// time.
 #[derive(Clone)]
 pub struct ThreadScopeStackBinding {
     stack: ScopeStackHandle,
     explicit: bool,
+    active_event: Option<ActiveEventBinding>,
 }
 
 impl ThreadScopeStackBinding {
@@ -659,9 +669,7 @@ pub fn capture_rootless_propagation_context() -> Result<PropagationContext> {
 pub fn capture_propagation_context_with_root(
     root_uuid: Option<Uuid>,
 ) -> Result<PropagationContext> {
-    let parent_uuid = ACTIVE_EVENT_UUID
-        .try_with(|uuid| *uuid)
-        .unwrap_or_else(|_| task_scope_top().uuid);
+    let parent_uuid = active_event_uuid().unwrap_or_else(|| task_scope_top().uuid);
     let (traceparent, tracestate) = current_scope_stack()
         .read()
         .map(|stack| stack.w3c_headers_for_parent(parent_uuid))
@@ -783,16 +791,42 @@ tokio::task_local! {
     /// Task-local scope stack handle used by async execution contexts.
     pub static TASK_SCOPE_STACK: ScopeStackHandle;
     /// Managed tool or LLM event currently executing in this task.
-    static ACTIVE_EVENT_UUID: Uuid;
+    static ACTIVE_EVENT: ActiveEventBinding;
 }
 
 /// Run a future with `uuid` as the causally active managed event.
 pub async fn with_active_event_uuid<T>(uuid: Uuid, future: impl Future<Output = T>) -> T {
-    ACTIVE_EVENT_UUID.scope(uuid, future).await
+    let (scope_stack_id, scope_stack_top) = scope_stack_identity_and_top();
+    let active_event = ActiveEventBinding {
+        uuid,
+        scope_stack_id,
+        scope_stack_top,
+    };
+    ACTIVE_EVENT.scope(active_event, future).await
 }
 
 pub(crate) fn active_event_uuid() -> Option<Uuid> {
-    ACTIVE_EVENT_UUID.try_with(|uuid| *uuid).ok()
+    ACTIVE_EVENT
+        .try_with(|event| event.uuid)
+        .ok()
+        .or_else(thread_active_event_uuid)
+}
+
+pub(crate) fn thread_active_event_uuid() -> Option<Uuid> {
+    let mut event = THREAD_ACTIVE_EVENT.with(Cell::get)?;
+    let stack = current_scope_stack();
+    if event.scope_stack_id != Arc::as_ptr(&stack) as usize {
+        return None;
+    }
+    let guard = stack.read().unwrap_or_else(|error| error.into_inner());
+    if event.scope_stack_top != guard.top().uuid {
+        if guard.find(&event.scope_stack_top).is_some() {
+            return None;
+        }
+        event.scope_stack_top = guard.top().uuid;
+        THREAD_ACTIVE_EVENT.with(|active| active.set(Some(event)));
+    }
+    Some(event.uuid)
 }
 
 thread_local! {
@@ -803,6 +837,8 @@ thread_local! {
     static THREAD_SCOPE_STACK: RefCell<ScopeStackHandle> = RefCell::new(create_scope_stack());
     /// Whether the current thread explicitly owns a scope stack.
     static THREAD_SCOPE_STACK_EXPLICIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Managed event propagated into a foreign executor with the thread scope binding.
+    static THREAD_ACTIVE_EVENT: Cell<Option<ActiveEventBinding>> = const { Cell::new(None) };
 }
 
 /// Return the scope stack visible to the current execution context.
@@ -883,12 +919,16 @@ pub fn set_thread_scope_stack(handle: ScopeStackHandle) {
 /// that thread back to their scheduler.
 ///
 /// # Returns
-/// A [`ThreadScopeStackBinding`] containing the current thread-local stack and
-/// explicit-binding flag.
+/// A [`ThreadScopeStackBinding`] containing the current thread-local stack,
+/// explicit-binding flag, and active managed event.
 pub fn capture_thread_scope_stack() -> ThreadScopeStackBinding {
     let stack = THREAD_SCOPE_STACK.with(|stack| stack.borrow().clone());
     let explicit = THREAD_SCOPE_STACK_EXPLICIT.with(|flag| flag.get());
-    ThreadScopeStackBinding { stack, explicit }
+    ThreadScopeStackBinding {
+        stack,
+        explicit,
+        active_event: THREAD_ACTIVE_EVENT.with(Cell::get),
+    }
 }
 
 /// Restore a previously captured thread-local scope stack binding.
@@ -901,6 +941,7 @@ pub fn capture_thread_scope_stack() -> ThreadScopeStackBinding {
 pub fn restore_thread_scope_stack(binding: ThreadScopeStackBinding) {
     THREAD_SCOPE_STACK.with(|stack| *stack.borrow_mut() = binding.stack);
     THREAD_SCOPE_STACK_EXPLICIT.with(|flag| flag.set(binding.explicit));
+    THREAD_ACTIVE_EVENT.with(|event| event.set(binding.active_event));
 }
 
 /// Synchronize the thread-local scope stack without marking it explicit.
@@ -919,6 +960,17 @@ pub fn restore_thread_scope_stack(binding: ThreadScopeStackBinding) {
 /// forcing `scope_stack_active()` to become `true` for the thread.
 pub fn sync_thread_scope_stack(handle: ScopeStackHandle) {
     THREAD_SCOPE_STACK.with(|stack| *stack.borrow_mut() = handle);
+}
+
+pub(crate) fn sync_thread_active_event() {
+    let active_event = ACTIVE_EVENT.try_with(|event| *event).ok();
+    THREAD_ACTIVE_EVENT.with(|event| event.set(active_event));
+}
+
+fn scope_stack_identity_and_top() -> (usize, Uuid) {
+    let stack = current_scope_stack();
+    let guard = stack.read().unwrap_or_else(|error| error.into_inner());
+    (Arc::as_ptr(&stack) as usize, guard.top().uuid)
 }
 
 /// Report whether the current context has an explicitly active scope stack.
