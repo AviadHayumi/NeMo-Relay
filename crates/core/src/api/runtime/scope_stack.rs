@@ -545,11 +545,11 @@ impl Default for ScopeStack {
 pub type ScopeStackHandle = Arc<RwLock<ScopeStack>>;
 
 #[derive(Clone, Copy)]
-pub(crate) struct ActiveEventBinding {
-    uuid: Uuid,
+pub(crate) struct AnchoredActiveEvent {
+    event_uuid: Uuid,
     // Propagated stacks may share a root UUID, so identify the captured Arc allocation.
-    scope_stack_id: usize,
-    scope_stack_top: Uuid,
+    stack_identity: usize,
+    anchor_scope_uuid: Uuid,
 }
 
 /// Captured thread-local scope stack binding.
@@ -561,7 +561,7 @@ pub(crate) struct ActiveEventBinding {
 pub struct ThreadScopeStackBinding {
     stack: ScopeStackHandle,
     explicit: bool,
-    active_event: Option<ActiveEventBinding>,
+    active_event: Option<AnchoredActiveEvent>,
 }
 
 impl ThreadScopeStackBinding {
@@ -791,47 +791,47 @@ tokio::task_local! {
     /// Task-local scope stack handle used by async execution contexts.
     pub static TASK_SCOPE_STACK: ScopeStackHandle;
     /// Managed tool or LLM event currently executing in this task.
-    static ACTIVE_EVENT: ActiveEventBinding;
+    static ACTIVE_EVENT: AnchoredActiveEvent;
 }
 
 /// Run a future with `uuid` as the causally active managed event.
 pub async fn with_active_event_uuid<T>(uuid: Uuid, future: impl Future<Output = T>) -> T {
-    let (scope_stack_id, scope_stack_top) = scope_stack_identity_and_top();
-    let active_event = ActiveEventBinding {
-        uuid,
-        scope_stack_id,
-        scope_stack_top,
+    let (stack_identity, anchor_scope_uuid) = scope_stack_identity_and_anchor();
+    let active_event = AnchoredActiveEvent {
+        event_uuid: uuid,
+        stack_identity,
+        anchor_scope_uuid,
     };
-    with_active_event_binding(active_event, future).await
+    with_anchored_active_event(active_event, future).await
 }
 
-pub(crate) async fn with_active_event_binding<T>(
-    active_event: ActiveEventBinding,
+pub(crate) async fn with_anchored_active_event<T>(
+    active_event: AnchoredActiveEvent,
     future: impl Future<Output = T>,
 ) -> T {
     ACTIVE_EVENT.scope(active_event, future).await
 }
 
-pub(crate) fn capture_active_event_binding() -> Option<ActiveEventBinding> {
+pub(crate) fn capture_anchored_active_event() -> Option<AnchoredActiveEvent> {
     ACTIVE_EVENT.try_with(|event| *event).ok().or_else(|| {
         let event = THREAD_ACTIVE_EVENT.with(Cell::get)?;
         let stack = current_scope_stack();
-        (event.scope_stack_id == Arc::as_ptr(&stack) as usize).then_some(event)
+        (event.stack_identity == Arc::as_ptr(&stack) as usize).then_some(event)
     })
 }
 
-pub(crate) fn rebase_active_event_binding(
-    active_event: ActiveEventBinding,
+pub(crate) fn rebind_active_event_to_stack(
+    active_event: AnchoredActiveEvent,
     scope_stack: &ScopeStackHandle,
-) -> ActiveEventBinding {
+) -> AnchoredActiveEvent {
     let guard = scope_stack
         .read()
         .unwrap_or_else(|error| error.into_inner());
-    ActiveEventBinding {
-        uuid: active_event.uuid,
-        scope_stack_id: Arc::as_ptr(scope_stack) as usize,
-        scope_stack_top: if guard.find(&active_event.scope_stack_top).is_some() {
-            active_event.scope_stack_top
+    AnchoredActiveEvent {
+        event_uuid: active_event.event_uuid,
+        stack_identity: Arc::as_ptr(scope_stack) as usize,
+        anchor_scope_uuid: if guard.find(&active_event.anchor_scope_uuid).is_some() {
+            active_event.anchor_scope_uuid
         } else {
             guard.top().uuid
         },
@@ -840,7 +840,7 @@ pub(crate) fn rebase_active_event_binding(
 
 pub(crate) fn active_event_uuid() -> Option<Uuid> {
     ACTIVE_EVENT
-        .try_with(|event| event.uuid)
+        .try_with(|event| event.event_uuid)
         .ok()
         .or_else(thread_active_event_uuid)
 }
@@ -848,18 +848,18 @@ pub(crate) fn active_event_uuid() -> Option<Uuid> {
 pub(crate) fn thread_active_event_uuid() -> Option<Uuid> {
     let mut event = THREAD_ACTIVE_EVENT.with(Cell::get)?;
     let stack = current_scope_stack();
-    if event.scope_stack_id != Arc::as_ptr(&stack) as usize {
+    if event.stack_identity != Arc::as_ptr(&stack) as usize {
         return None;
     }
     let guard = stack.read().unwrap_or_else(|error| error.into_inner());
-    if event.scope_stack_top != guard.top().uuid {
-        if guard.find(&event.scope_stack_top).is_some() {
+    if event.anchor_scope_uuid != guard.top().uuid {
+        if guard.find(&event.anchor_scope_uuid).is_some() {
             return None;
         }
-        event.scope_stack_top = guard.top().uuid;
+        event.anchor_scope_uuid = guard.top().uuid;
         THREAD_ACTIVE_EVENT.with(|active| active.set(Some(event)));
     }
-    Some(event.uuid)
+    Some(event.event_uuid)
 }
 
 thread_local! {
@@ -871,7 +871,7 @@ thread_local! {
     /// Whether the current thread explicitly owns a scope stack.
     static THREAD_SCOPE_STACK_EXPLICIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Managed event propagated into a foreign executor with the thread scope binding.
-    static THREAD_ACTIVE_EVENT: Cell<Option<ActiveEventBinding>> = const { Cell::new(None) };
+    static THREAD_ACTIVE_EVENT: Cell<Option<AnchoredActiveEvent>> = const { Cell::new(None) };
 }
 
 /// Return the scope stack visible to the current execution context.
@@ -999,15 +999,15 @@ pub fn sync_thread_scope_stack(handle: ScopeStackHandle) {
 ///
 /// Native async callbacks run on a plugin-owned executor. The host snapshots
 /// the callback's visible stack before crossing that boundary, so the managed
-/// event binding must be rebased to the snapshot's allocation while retaining
-/// its original scope anchor.
+/// event must be rebound to the snapshot's allocation while retaining its
+/// original scope anchor.
 pub(crate) fn sync_thread_active_event_for_stack(scope_stack: &ScopeStackHandle) {
-    let active_event = capture_active_event_binding()
-        .map(|active_event| rebase_active_event_binding(active_event, scope_stack));
+    let active_event = capture_anchored_active_event()
+        .map(|active_event| rebind_active_event_to_stack(active_event, scope_stack));
     THREAD_ACTIVE_EVENT.with(|event| event.set(active_event));
 }
 
-fn scope_stack_identity_and_top() -> (usize, Uuid) {
+fn scope_stack_identity_and_anchor() -> (usize, Uuid) {
     let stack = current_scope_stack();
     let guard = stack.read().unwrap_or_else(|error| error.into_inner());
     (Arc::as_ptr(&stack) as usize, guard.top().uuid)

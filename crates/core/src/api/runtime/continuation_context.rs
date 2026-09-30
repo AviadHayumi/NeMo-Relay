@@ -9,9 +9,9 @@ use crate::api::optimization::{
     LlmOptimizationRecorder, current_llm_optimization_recorder, scope_llm_optimization_recorder,
 };
 use crate::api::runtime::scope_stack::{
-    ActiveEventBinding, ScopeStackHandle, TASK_SCOPE_STACK, capture_active_event_binding,
-    current_context_scope_stack, current_scope_stack, rebase_active_event_binding,
-    scope_stack_active, snapshot_scope_stack, with_active_event_binding,
+    AnchoredActiveEvent, ScopeStackHandle, TASK_SCOPE_STACK, capture_anchored_active_event,
+    current_context_scope_stack, current_scope_stack, rebind_active_event_to_stack,
+    scope_stack_active, snapshot_scope_stack, with_anchored_active_event,
 };
 use crate::api::runtime::subscriber_dispatcher::{
     PublicationBuffer, PublicationContext, capture_nested_publication_buffer,
@@ -28,7 +28,7 @@ use crate::error::{FlowError, Result};
 #[derive(Clone)]
 pub struct MiddlewareContinuationContext {
     scope_stack: ScopeStackHandle,
-    active_event: Option<ActiveEventBinding>,
+    active_event: Option<AnchoredActiveEvent>,
     publication_context: Option<PublicationContext>,
     publication_buffer: Option<PublicationBuffer>,
     optimization_recorder: Option<LlmOptimizationRecorder>,
@@ -41,7 +41,7 @@ impl MiddlewareContinuationContext {
     pub fn capture() -> Self {
         Self {
             scope_stack: current_scope_stack(),
-            active_event: capture_active_event_binding(),
+            active_event: capture_anchored_active_event(),
             publication_context: capture_publication_context(),
             publication_buffer: capture_nested_publication_buffer(),
             optimization_recorder: current_llm_optimization_recorder(),
@@ -68,7 +68,7 @@ impl MiddlewareContinuationContext {
         Ok(Self {
             active_event: self
                 .active_event
-                .map(|active_event| rebase_active_event_binding(active_event, &scope_stack)),
+                .map(|active_event| rebind_active_event_to_stack(active_event, &scope_stack)),
             scope_stack,
             publication_context: self.publication_context.clone(),
             publication_buffer: self.publication_buffer.clone(),
@@ -97,7 +97,7 @@ impl MiddlewareContinuationContext {
             with_task_nested_publication_buffer(self.publication_buffer.clone(), published);
         let active = async {
             match self.active_event {
-                Some(active_event) => with_active_event_binding(active_event, published).await,
+                Some(active_event) => with_anchored_active_event(active_event, published).await,
                 None => published.await,
             }
         };
