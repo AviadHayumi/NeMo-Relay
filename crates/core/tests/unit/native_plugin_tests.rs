@@ -7,6 +7,7 @@ use super::*;
 
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Barrier;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -2386,11 +2387,11 @@ fn thread_active_event_applies_only_at_the_captured_stack_top() {
     Runtime::new()
         .unwrap()
         .block_on(with_active_event_uuid(managed_event_uuid, async {
-            sync_thread_active_event();
+            sync_thread_active_event_for_stack(&current_scope_stack());
             crate::api::runtime::task_scope_push(nested);
             // Re-entering another native callback must not move the managed
             // event's anchor past a scope opened by the first callback.
-            sync_thread_active_event();
+            sync_thread_active_event_for_stack(&current_scope_stack());
         }));
 
     assert_parent(None, nested_uuid);
@@ -2421,7 +2422,7 @@ fn restored_thread_active_event_rebases_after_its_stack_anchor_closes() {
         Runtime::new()
             .unwrap()
             .block_on(with_active_event_uuid(managed_event_uuid, async {
-                sync_thread_active_event();
+                sync_thread_active_event_for_stack(&current_scope_stack());
                 capture_thread_scope_stack()
             }));
 
@@ -5482,6 +5483,400 @@ unsafe extern "C" fn resolve_async_static_json(
         NemoRelayStatus::Ok
     );
     NemoRelayNativeAsyncCallbackState::Complete as u32
+}
+
+#[derive(Debug)]
+struct NativeCallbackEntryObservation {
+    isolated_stack: bool,
+    scope_local_subscriber_preserved: bool,
+    managed_event_is_parent: bool,
+    nested_scope_closed: bool,
+}
+
+struct NativeCallbackEntryProbe {
+    original_stack: ScopeStackHandle,
+    expected_subscriber: EventSubscriberFn,
+    expected_parent: uuid::Uuid,
+    observation: Mutex<Option<NativeCallbackEntryObservation>>,
+}
+
+unsafe extern "C" fn observe_native_callback_entry(
+    user_data: *mut c_void,
+    _invocation_json: *const NemoRelayNativeString,
+    _next: *const NemoRelayNativeAsyncNext,
+    completion: *const NemoRelayNativeAsyncCompletion,
+) -> u32 {
+    let probe = unsafe { &*user_data.cast::<NativeCallbackEntryProbe>() };
+    let callback_stack = current_scope_stack();
+    let subscribers = callback_stack
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+        .collect_scope_local_subscribers();
+    let managed_event_is_parent =
+        crate::api::shared::resolve_parent_uuid(None) == Some(probe.expected_parent);
+    let nested = ScopeHandle::builder()
+        .name("callback-entry")
+        .scope_type(ScopeType::Custom)
+        .parent_uuid(crate::api::shared::resolve_parent_uuid(None).unwrap())
+        .build();
+    let nested_uuid = nested.uuid;
+    crate::api::runtime::task_scope_push(nested);
+    *probe
+        .observation
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some(NativeCallbackEntryObservation {
+        isolated_stack: !Arc::ptr_eq(&callback_stack, &probe.original_stack),
+        scope_local_subscriber_preserved: subscribers
+            .iter()
+            .any(|subscriber| Arc::ptr_eq(subscriber, &probe.expected_subscriber)),
+        managed_event_is_parent,
+        nested_scope_closed: crate::api::runtime::task_scope_remove(&nested_uuid).is_ok(),
+    });
+
+    let value = native_string_from_json(&Json::Null).unwrap();
+    assert_eq!(
+        unsafe { native_async_completion_resolve_json(completion, value) },
+        NemoRelayStatus::Ok
+    );
+    unsafe { native_string_free(value) };
+    NemoRelayNativeAsyncCallbackState::Complete as u32
+}
+
+#[test]
+fn native_callback_entry_uses_an_isolated_snapshot() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let original_stack = create_scope_stack();
+    let outer = ScopeHandle::builder()
+        .name("outer")
+        .scope_type(ScopeType::Custom)
+        .parent_uuid(
+            original_stack
+                .read()
+                .unwrap_or_else(|error| error.into_inner())
+                .root_uuid(),
+        )
+        .build();
+    let outer_uuid = outer.uuid;
+    let subscriber: EventSubscriberFn = Arc::new(|_| {});
+    {
+        let mut stack = original_stack
+            .write()
+            .unwrap_or_else(|error| error.into_inner());
+        stack.push(outer);
+        stack
+            .local_registries_mut(&outer_uuid)
+            .unwrap()
+            .event_subscribers
+            .insert("callback-local".into(), subscriber.clone());
+    }
+    let managed_event_uuid = uuid::Uuid::now_v7();
+    let probe = NativeCallbackEntryProbe {
+        original_stack: original_stack.clone(),
+        expected_subscriber: subscriber,
+        expected_parent: managed_event_uuid,
+        observation: Mutex::new(None),
+    };
+    let user_data = Arc::new(NativeCallbackUserData {
+        ptr: (&probe as *const NativeCallbackEntryProbe)
+            .cast_mut()
+            .cast(),
+        free_fn: None,
+        _instance: None,
+    });
+
+    let result = runtime.block_on(TASK_SCOPE_STACK.scope(
+        original_stack.clone(),
+        with_active_event_uuid(
+            managed_event_uuid,
+            invoke_native_async_callback(
+                observe_native_callback_entry,
+                user_data,
+                Json::Null,
+                None,
+                None,
+            ),
+        ),
+    ));
+    assert_eq!(result.unwrap(), Json::Null);
+    let observation = probe.observation.lock().unwrap().take().unwrap();
+    assert!(observation.isolated_stack);
+    assert!(observation.scope_local_subscriber_preserved);
+    assert!(observation.managed_event_is_parent);
+    assert!(observation.nested_scope_closed);
+    assert_eq!(
+        original_stack
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .top()
+            .uuid,
+        outer_uuid
+    );
+}
+
+struct NativeCallbackInterleave {
+    original_stack: ScopeStackHandle,
+    callbacks_entered: Barrier,
+    first_opened: Barrier,
+    both_opened: Barrier,
+    first_closed: Barrier,
+}
+
+impl NativeCallbackInterleave {
+    fn new(original_stack: ScopeStackHandle) -> Self {
+        Self {
+            original_stack,
+            callbacks_entered: Barrier::new(2),
+            first_opened: Barrier::new(2),
+            both_opened: Barrier::new(2),
+            first_closed: Barrier::new(2),
+        }
+    }
+
+    fn run(&self, branch: u8) -> bool {
+        // Both callbacks must capture their context before either mutates it.
+        self.callbacks_entered.wait();
+
+        let scope = ScopeHandle::builder()
+            .name(format!("callback-{branch}"))
+            .scope_type(ScopeType::Custom)
+            .parent_uuid(crate::api::shared::resolve_parent_uuid(None).unwrap())
+            .build();
+        let scope_uuid = scope.uuid;
+        if branch == 0 {
+            crate::api::runtime::task_scope_push(scope);
+            self.first_opened.wait();
+        } else {
+            self.first_opened.wait();
+            crate::api::runtime::task_scope_push(scope);
+        }
+
+        // Force A-push, B-push, A-close, B-close. A shared LIFO stack rejects
+        // A's close because B is still on top.
+        self.both_opened.wait();
+        if branch == 0 {
+            let closed = crate::api::runtime::task_scope_remove(&scope_uuid).is_ok();
+            self.first_closed.wait();
+            closed
+        } else {
+            self.first_closed.wait();
+            crate::api::runtime::task_scope_remove(&scope_uuid).is_ok()
+        }
+    }
+}
+
+unsafe extern "C" fn free_native_callback_interleave(user_data: *mut c_void) {
+    drop(unsafe { Box::from_raw(user_data.cast::<Arc<NativeCallbackInterleave>>()) });
+}
+
+fn native_callback_interleave_user_data(
+    state: Arc<NativeCallbackInterleave>,
+) -> Arc<NativeCallbackUserData> {
+    Arc::new(NativeCallbackUserData {
+        ptr: Box::into_raw(Box::new(state)).cast(),
+        free_fn: Some(free_native_callback_interleave),
+        _instance: None,
+    })
+}
+
+fn native_callback_branch(invocation_json: *const NemoRelayNativeString) -> u8 {
+    let invocation: Json = serde_json::from_str(&read_native_string(invocation_json).unwrap())
+        .expect("native callback invocation should be JSON");
+    invocation
+        .get("branch")
+        .or_else(|| invocation.pointer("/request/content/branch"))
+        .and_then(Json::as_u64)
+        .expect("native callback invocation should identify its branch") as u8
+}
+
+unsafe extern "C" fn interleave_native_callback_scopes(
+    user_data: *mut c_void,
+    invocation_json: *const NemoRelayNativeString,
+    _next: *const NemoRelayNativeAsyncNext,
+    completion: *const NemoRelayNativeAsyncCompletion,
+) -> u32 {
+    let branch = native_callback_branch(invocation_json);
+    let state = unsafe { &*user_data.cast::<Arc<NativeCallbackInterleave>>() }.clone();
+    let isolated_entry = !Arc::ptr_eq(&current_scope_stack(), &state.original_stack);
+    let binding = capture_thread_scope_stack();
+    let completion = completion as usize;
+    std::thread::spawn(move || {
+        let _restore = ThreadScopeStackRestore::capture();
+        restore_thread_scope_stack(binding);
+        let closed = state.run(branch);
+        let value = native_string_from_json(
+            &json!({"branch": branch, "closed": closed, "isolated_entry": isolated_entry}),
+        )
+        .unwrap();
+        assert_eq!(
+            unsafe {
+                native_async_completion_resolve_json(
+                    completion as *const NemoRelayNativeAsyncCompletion,
+                    value,
+                )
+            },
+            NemoRelayStatus::Ok
+        );
+        unsafe {
+            native_string_free(value);
+            native_async_completion_release(completion as *const NemoRelayNativeAsyncCompletion);
+        }
+    });
+    NemoRelayNativeAsyncCallbackState::Pending as u32
+}
+
+#[test]
+fn concurrent_native_callbacks_close_scopes_on_isolated_stacks() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let original_stack = create_scope_stack();
+    let user_data = native_callback_interleave_user_data(Arc::new(NativeCallbackInterleave::new(
+        original_stack.clone(),
+    )));
+
+    let (first, second) = runtime
+        .block_on(async {
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                TASK_SCOPE_STACK.scope(original_stack, async {
+                    tokio::join!(
+                        invoke_native_async_callback(
+                            interleave_native_callback_scopes,
+                            user_data.clone(),
+                            json!({"branch": 0}),
+                            None,
+                            None,
+                        ),
+                        invoke_native_async_callback(
+                            interleave_native_callback_scopes,
+                            user_data,
+                            json!({"branch": 1}),
+                            None,
+                            None,
+                        )
+                    )
+                }),
+            )
+            .await
+        })
+        .expect("concurrent native callbacks should settle");
+    assert_eq!(
+        first.unwrap(),
+        json!({"branch": 0, "closed": true, "isolated_entry": true})
+    );
+    assert_eq!(
+        second.unwrap(),
+        json!({"branch": 1, "closed": true, "isolated_entry": true})
+    );
+}
+
+unsafe extern "C" fn interleave_native_stream_callback_scopes(
+    user_data: *mut c_void,
+    invocation_json: *const NemoRelayNativeString,
+    next: *const NemoRelayNativeAsyncNext,
+    stream: *const NemoRelayNativeAsyncStream,
+) -> u32 {
+    let branch = native_callback_branch(invocation_json);
+    let state = unsafe { &*user_data.cast::<Arc<NativeCallbackInterleave>>() }.clone();
+    let isolated_entry = !Arc::ptr_eq(&current_scope_stack(), &state.original_stack);
+    let binding = capture_thread_scope_stack();
+    let next = next as usize;
+    let stream = stream as usize;
+    std::thread::spawn(move || {
+        let _restore = ThreadScopeStackRestore::capture();
+        restore_thread_scope_stack(binding);
+        let closed = state.run(branch);
+        let value = native_string_from_json(
+            &json!({"branch": branch, "closed": closed, "isolated_entry": isolated_entry}),
+        )
+        .unwrap();
+        assert_eq!(
+            unsafe {
+                native_async_stream_push_json(stream as *const NemoRelayNativeAsyncStream, value)
+            },
+            NemoRelayStatus::Ok
+        );
+        assert_eq!(
+            unsafe { native_async_stream_finish(stream as *const NemoRelayNativeAsyncStream) },
+            NemoRelayStatus::Ok
+        );
+        unsafe {
+            native_string_free(value);
+            native_async_next_release(next as *const NemoRelayNativeAsyncNext);
+            native_async_stream_release(stream as *const NemoRelayNativeAsyncStream);
+        }
+    });
+    NemoRelayNativeAsyncCallbackState::Pending as u32
+}
+
+#[test]
+fn concurrent_native_stream_callbacks_close_scopes_on_isolated_stacks() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let original_stack = create_scope_stack();
+    let wrapped = wrap_native_incremental_llm_stream_execution_with_user_data(
+        interleave_native_stream_callback_scopes,
+        native_callback_interleave_user_data(Arc::new(NativeCallbackInterleave::new(
+            original_stack.clone(),
+        ))),
+    );
+    let downstream: LlmStreamExecutionNextFn =
+        Arc::new(|_| Box::pin(async { Ok(LlmJsonStream::new(tokio_stream::empty())) }));
+
+    let (first_chunk, second_chunk, first_done, second_done) = runtime
+        .block_on(async {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                let (first, second) = TASK_SCOPE_STACK
+                    .scope(original_stack, async {
+                        tokio::join!(
+                            wrapped(
+                                "first",
+                                LlmRequest {
+                                    headers: Map::new(),
+                                    content: json!({"branch": 0}),
+                                },
+                                downstream.clone(),
+                            ),
+                            wrapped(
+                                "second",
+                                LlmRequest {
+                                    headers: Map::new(),
+                                    content: json!({"branch": 1}),
+                                },
+                                downstream,
+                            )
+                        )
+                    })
+                    .await;
+                let mut first = first.unwrap();
+                let mut second = second.unwrap();
+                let (first_chunk, second_chunk) = tokio::join!(first.next(), second.next());
+                (
+                    first_chunk,
+                    second_chunk,
+                    first.next().await,
+                    second.next().await,
+                )
+            })
+            .await
+        })
+        .expect("concurrent native streams should settle");
+    assert_eq!(
+        first_chunk.unwrap().unwrap(),
+        json!({"branch": 0, "closed": true, "isolated_entry": true})
+    );
+    assert_eq!(
+        second_chunk.unwrap().unwrap(),
+        json!({"branch": 1, "closed": true, "isolated_entry": true})
+    );
+    assert!(first_done.is_none());
+    assert!(second_done.is_none());
 }
 
 #[cfg(unix)]

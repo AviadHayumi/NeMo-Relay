@@ -486,6 +486,57 @@ async fn sdk_cdylib_registers_tool_request_intercept() {
     );
 
     events.lock().unwrap().clear();
+    let result = tool_call_execute(
+        ToolCallExecuteParams::builder()
+            .name("native-fixture-tool-scoped-next")
+            .args(json!({
+                "input": "scoped-next",
+                "use_scoped_next": true
+            }))
+            .func(Arc::new(|_args| {
+                Box::pin(async move {
+                    emit_scope_mark(
+                        EmitMarkEventParams::builder()
+                            .name("native-fixture-tool-scoped-next-callback-mark")
+                            .build(),
+                    )?;
+                    Ok(ToolExecutionResult::new(json!({ "tool_callback": true })))
+                })
+            }))
+            .build(),
+    )
+    .await
+    .expect("native scoped next middleware should run");
+    assert_eq!(result.result["tool_callback"], true);
+    flush_subscribers().expect("scoped next native fixture events should flush");
+    let scoped_next_events = events.lock().unwrap().clone();
+    let scoped_next_scope = find_event(
+        &scoped_next_events,
+        "fixture.native.scoped.next",
+        Some(ScopeCategory::Start),
+    );
+    let downstream_scoped_next_scope = find_event(
+        &scoped_next_events,
+        "fixture.native.scoped.next.downstream",
+        Some(ScopeCategory::Start),
+    );
+    let scoped_next_callback_mark = find_event(
+        &scoped_next_events,
+        "native-fixture-tool-scoped-next-callback-mark",
+        None,
+    );
+    assert_eq!(
+        downstream_scoped_next_scope.parent_uuid(),
+        Some(scoped_next_scope.uuid()),
+        "the downstream native callback should inherit the scope opened around next.call"
+    );
+    assert_eq!(
+        scoped_next_callback_mark.parent_uuid(),
+        Some(downstream_scoped_next_scope.uuid()),
+        "work below the downstream native callback should remain nested"
+    );
+
+    events.lock().unwrap().clear();
     {
         let thread_stack = create_scope_stack();
         let _thread_stack_restore = ThreadScopeStackRestore::capture();

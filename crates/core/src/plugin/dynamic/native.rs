@@ -27,6 +27,7 @@ use crate::api::registry::{
     RuntimeRegistrationKind, deregister_conditional_middleware_guardrail,
     list_runtime_registrations, register_conditional_middleware_guardrail,
 };
+use crate::api::runtime::scope_stack::snapshot_scope_stack;
 use crate::api::runtime::{
     ConditionalMiddlewareGuardrailFn, EventMetadataInjectorFn, EventSanitizeFn, EventSubscriberFn,
     LlmCodecIdentity, LlmConditionalFn, LlmExecutionFn, LlmExecutionNextFn, LlmJsonStream,
@@ -38,7 +39,7 @@ use crate::api::runtime::{
 use crate::api::runtime::{
     ScopeStackHandle, ThreadScopeStackBinding, capture_thread_scope_stack, create_scope_stack,
     current_scope_stack, restore_thread_scope_stack, scope_stack_active, set_thread_scope_stack,
-    sync_thread_active_event, sync_thread_scope_stack, with_scope_stack,
+    sync_thread_active_event_for_stack, sync_thread_scope_stack, with_scope_stack,
 };
 use crate::api::scope::{
     EmitMarkEventParams, PopScopeParams, PushScopeParams, ScopeAttributes, ScopeHandle, ScopeType,
@@ -2047,6 +2048,7 @@ async fn invoke_native_async_callback(
     } else {
         None
     };
+    let callback_scope_stack = snapshot_scope_stack(&current_scope_stack())?;
     let invocation = native_string_from_json(&invocation)
         .ok_or_else(|| FlowError::Internal("failed to allocate native async invocation".into()))?
         as usize;
@@ -2068,7 +2070,7 @@ async fn invoke_native_async_callback(
         completed: false,
     };
     let completion_ref = Arc::into_raw(completion.clone()) as usize;
-    let next_ref = match (next, runtime) {
+    let next_ref = with_scope_stack(callback_scope_stack.clone(), || match (next, runtime) {
         (Some(inner), Some(runtime)) => Some(Arc::into_raw(Arc::new(
             NativeAsyncNext::with_completion_owner(
                 inner,
@@ -2079,23 +2081,25 @@ async fn invoke_native_async_callback(
         )) as usize),
         (None, None) => None,
         _ => unreachable!("runtime is present exactly for native async intercepts"),
-    };
+    });
     // ABI v3 exposes a thread-stack capture operation. Mirror the effective
     // task-local stack into that slot only while entering plugin code so the
     // SDK can capture it before moving the future to its own executor.
     let previous_thread_stack = capture_thread_scope_stack();
-    sync_thread_scope_stack(current_scope_stack());
-    sync_thread_active_event();
-    let state = catch_unwind(AssertUnwindSafe(|| unsafe {
-        cb(
-            user_data.ptr,
-            invocation as *const NemoRelayNativeString,
-            next_ref
-                .map(|next| next as *const NemoRelayNativeAsyncNext)
-                .unwrap_or(ptr::null()),
-            completion_ref as *const NemoRelayNativeAsyncCompletion,
-        )
-    }));
+    sync_thread_scope_stack(callback_scope_stack.clone());
+    sync_thread_active_event_for_stack(&callback_scope_stack);
+    let state = with_scope_stack(callback_scope_stack, || {
+        catch_unwind(AssertUnwindSafe(|| unsafe {
+            cb(
+                user_data.ptr,
+                invocation as *const NemoRelayNativeString,
+                next_ref
+                    .map(|next| next as *const NemoRelayNativeAsyncNext)
+                    .unwrap_or(ptr::null()),
+                completion_ref as *const NemoRelayNativeAsyncCompletion,
+            )
+        }))
+    });
     restore_thread_scope_stack(previous_thread_stack);
     let state = match state {
         Ok(state) => state,
@@ -3792,24 +3796,29 @@ fn wrap_native_incremental_llm_stream_execution_with_user_data(
                         "native async stream intercept requires a Tokio runtime: {error}"
                     ))
                 })?;
-                let next_ref = Arc::into_raw(Arc::new(NativeAsyncNext::with_stream_owner(
-                    NativeAsyncNextInner::LlmStream(next),
-                    runtime,
-                    Some(user_data.clone()),
-                    &stream,
-                )));
+                let callback_scope_stack = snapshot_scope_stack(&current_scope_stack())?;
+                let next_ref = with_scope_stack(callback_scope_stack.clone(), || {
+                    Arc::into_raw(Arc::new(NativeAsyncNext::with_stream_owner(
+                        NativeAsyncNextInner::LlmStream(next),
+                        runtime,
+                        Some(user_data.clone()),
+                        &stream,
+                    )))
+                });
                 let stream_ref = Arc::into_raw(stream.clone());
                 let previous_thread_stack = capture_thread_scope_stack();
-                sync_thread_scope_stack(current_scope_stack());
-                sync_thread_active_event();
-                let state = catch_unwind(AssertUnwindSafe(|| unsafe {
-                    cb(
-                        user_data.ptr,
-                        invocation,
-                        next_ref as *const NemoRelayNativeAsyncNext,
-                        stream_ref as *const NemoRelayNativeAsyncStream,
-                    )
-                }));
+                sync_thread_scope_stack(callback_scope_stack.clone());
+                sync_thread_active_event_for_stack(&callback_scope_stack);
+                let state = with_scope_stack(callback_scope_stack, || {
+                    catch_unwind(AssertUnwindSafe(|| unsafe {
+                        cb(
+                            user_data.ptr,
+                            invocation,
+                            next_ref as *const NemoRelayNativeAsyncNext,
+                            stream_ref as *const NemoRelayNativeAsyncStream,
+                        )
+                    }))
+                });
                 restore_thread_scope_stack(previous_thread_stack);
                 unsafe { native_string_free(invocation) };
                 state

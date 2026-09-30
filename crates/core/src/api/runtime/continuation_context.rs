@@ -9,8 +9,9 @@ use crate::api::optimization::{
     LlmOptimizationRecorder, current_llm_optimization_recorder, scope_llm_optimization_recorder,
 };
 use crate::api::runtime::scope_stack::{
-    ScopeStackHandle, TASK_SCOPE_STACK, active_event_uuid, current_context_scope_stack,
-    current_scope_stack, scope_stack_active, snapshot_scope_stack, with_active_event_uuid,
+    ActiveEventBinding, ScopeStackHandle, TASK_SCOPE_STACK, capture_active_event_binding,
+    current_context_scope_stack, current_scope_stack, rebase_active_event_binding,
+    scope_stack_active, snapshot_scope_stack, with_active_event_binding,
 };
 use crate::api::runtime::subscriber_dispatcher::{
     PublicationBuffer, PublicationContext, capture_nested_publication_buffer,
@@ -27,7 +28,7 @@ use crate::error::{FlowError, Result};
 #[derive(Clone)]
 pub struct MiddlewareContinuationContext {
     scope_stack: ScopeStackHandle,
-    active_event_uuid: Option<uuid::Uuid>,
+    active_event: Option<ActiveEventBinding>,
     publication_context: Option<PublicationContext>,
     publication_buffer: Option<PublicationBuffer>,
     optimization_recorder: Option<LlmOptimizationRecorder>,
@@ -40,7 +41,7 @@ impl MiddlewareContinuationContext {
     pub fn capture() -> Self {
         Self {
             scope_stack: current_scope_stack(),
-            active_event_uuid: active_event_uuid(),
+            active_event: capture_active_event_binding(),
             publication_context: capture_publication_context(),
             publication_buffer: capture_nested_publication_buffer(),
             optimization_recorder: current_llm_optimization_recorder(),
@@ -63,9 +64,12 @@ impl MiddlewareContinuationContext {
     /// from the stack captured when the middleware callback began.
     #[doc(hidden)]
     pub fn isolated_with_scope_stack(&self, scope_stack: &ScopeStackHandle) -> Result<Self> {
+        let scope_stack = snapshot_scope_stack(scope_stack)?;
         Ok(Self {
-            scope_stack: snapshot_scope_stack(scope_stack)?,
-            active_event_uuid: self.active_event_uuid,
+            active_event: self
+                .active_event
+                .map(|active_event| rebase_active_event_binding(active_event, &scope_stack)),
+            scope_stack,
             publication_context: self.publication_context.clone(),
             publication_buffer: self.publication_buffer.clone(),
             optimization_recorder: self.optimization_recorder.clone(),
@@ -92,8 +96,8 @@ impl MiddlewareContinuationContext {
         let published =
             with_task_nested_publication_buffer(self.publication_buffer.clone(), published);
         let active = async {
-            match self.active_event_uuid {
-                Some(uuid) => with_active_event_uuid(uuid, published).await,
+            match self.active_event {
+                Some(active_event) => with_active_event_binding(active_event, published).await,
                 None => published.await,
             }
         };

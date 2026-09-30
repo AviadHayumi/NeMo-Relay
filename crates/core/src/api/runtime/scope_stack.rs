@@ -545,7 +545,7 @@ impl Default for ScopeStack {
 pub type ScopeStackHandle = Arc<RwLock<ScopeStack>>;
 
 #[derive(Clone, Copy)]
-struct ActiveEventBinding {
+pub(crate) struct ActiveEventBinding {
     uuid: Uuid,
     // Propagated stacks may share a root UUID, so identify the captured Arc allocation.
     scope_stack_id: usize,
@@ -802,7 +802,40 @@ pub async fn with_active_event_uuid<T>(uuid: Uuid, future: impl Future<Output = 
         scope_stack_id,
         scope_stack_top,
     };
+    with_active_event_binding(active_event, future).await
+}
+
+pub(crate) async fn with_active_event_binding<T>(
+    active_event: ActiveEventBinding,
+    future: impl Future<Output = T>,
+) -> T {
     ACTIVE_EVENT.scope(active_event, future).await
+}
+
+pub(crate) fn capture_active_event_binding() -> Option<ActiveEventBinding> {
+    ACTIVE_EVENT.try_with(|event| *event).ok().or_else(|| {
+        let event = THREAD_ACTIVE_EVENT.with(Cell::get)?;
+        let stack = current_scope_stack();
+        (event.scope_stack_id == Arc::as_ptr(&stack) as usize).then_some(event)
+    })
+}
+
+pub(crate) fn rebase_active_event_binding(
+    active_event: ActiveEventBinding,
+    scope_stack: &ScopeStackHandle,
+) -> ActiveEventBinding {
+    let guard = scope_stack
+        .read()
+        .unwrap_or_else(|error| error.into_inner());
+    ActiveEventBinding {
+        uuid: active_event.uuid,
+        scope_stack_id: Arc::as_ptr(scope_stack) as usize,
+        scope_stack_top: if guard.find(&active_event.scope_stack_top).is_some() {
+            active_event.scope_stack_top
+        } else {
+            guard.top().uuid
+        },
+    }
 }
 
 pub(crate) fn active_event_uuid() -> Option<Uuid> {
@@ -962,8 +995,15 @@ pub fn sync_thread_scope_stack(handle: ScopeStackHandle) {
     THREAD_SCOPE_STACK.with(|stack| *stack.borrow_mut() = handle);
 }
 
-pub(crate) fn sync_thread_active_event() {
-    let active_event = ACTIVE_EVENT.try_with(|event| *event).ok();
+/// Synchronize the task-local managed event onto an isolated thread stack.
+///
+/// Native async callbacks run on a plugin-owned executor. The host snapshots
+/// the callback's visible stack before crossing that boundary, so the managed
+/// event binding must be rebased to the snapshot's allocation while retaining
+/// its original scope anchor.
+pub(crate) fn sync_thread_active_event_for_stack(scope_stack: &ScopeStackHandle) {
+    let active_event = capture_active_event_binding()
+        .map(|active_event| rebase_active_event_binding(active_event, scope_stack));
     THREAD_ACTIVE_EVENT.with(|event| event.set(active_event));
 }
 
