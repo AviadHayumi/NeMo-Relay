@@ -391,50 +391,77 @@ impl NativePlugin for FixtureNativePlugin {
                 ))
             },
         )?;
-        ctx.register_llm_execution_intercept("fixture_llm_execution", 0, {
+        ctx.register_llm_execution_intercept(
+            "fixture_llm_execution",
+            0,
+            |_name, request, next| async move {
+                let response = next
+                    .call(mark_llm_request(
+                        request,
+                        "native_plugin_llm_execution_request",
+                    ))
+                    .await?;
+                Ok(mark_json(response, "native_plugin_llm_execution"))
+            },
+        )?;
+        ctx.register_llm_stream_execution_intercept(
+            "fixture_llm_stream_execution",
+            0,
+            |_name, request, next| async move {
+                let stream = next
+                    .call(mark_llm_request(
+                        request,
+                        "native_plugin_llm_stream_execution_request",
+                    ))
+                    .await?;
+                let stream: LlmJsonAsyncStream = Box::pin(stream.map(|chunk| {
+                    chunk.map(|chunk| mark_json(chunk, "native_plugin_llm_stream_execution"))
+                }));
+                Ok(stream)
+            },
+        )?;
+        ctx.register_llm_execution_intercept("fixture_llm_execution_cancellation", -1, {
             let runtime = runtime.clone();
             move |name, request, next| {
-                let drop_scope = (name == "native-fixture-cancelled-unary").then(|| DropScope {
-                    runtime: runtime.clone(),
-                    name: "fixture.native.unary.drop",
-                });
+                let runtime = runtime.clone();
                 async move {
-                    if let Some(_drop_scope) = drop_scope {
-                        ASYNC_PENDING_ENTERED.store(true, Ordering::Release);
-                        return futures::future::pending::<nemo_relay_plugin::Result<Json>>().await;
+                    if name != "native-fixture-cancelled-unary" {
+                        return next.call(request).await;
                     }
-                    let response = next
-                        .call(mark_llm_request(
-                            request,
-                            "native_plugin_llm_execution_request",
-                        ))
-                        .await?;
-                    Ok(mark_json(response, "native_plugin_llm_execution"))
+                    let _drop_scope = DropScope {
+                        runtime,
+                        name: "fixture.native.unary.drop",
+                    };
+                    ASYNC_PENDING_ENTERED.store(true, Ordering::Release);
+                    futures::future::pending::<nemo_relay_plugin::Result<Json>>().await
                 }
             }
         })?;
-        ctx.register_llm_stream_execution_intercept("fixture_llm_stream_execution", 0, {
-            let runtime = runtime.clone();
-            move |name, request, next| {
-                let drop_scope = (name == "native-fixture-cancelled-stream").then(|| DropScope {
-                    runtime: runtime.clone(),
-                    name: "fixture.native.stream.drop",
-                });
-                async move {
-                    let stream = next
-                        .call(mark_llm_request(
-                            request,
-                            "native_plugin_llm_stream_execution_request",
-                        ))
-                        .await?;
-                    let stream: LlmJsonAsyncStream = Box::pin(stream.map(move |chunk| {
-                        let _ = &drop_scope;
-                        chunk.map(|chunk| mark_json(chunk, "native_plugin_llm_stream_execution"))
-                    }));
-                    Ok(stream)
+        ctx.register_llm_stream_execution_intercept(
+            "fixture_llm_stream_execution_cancellation",
+            -1,
+            {
+                let runtime = runtime.clone();
+                move |name, request, next| {
+                    let runtime = runtime.clone();
+                    async move {
+                        if name != "native-fixture-cancelled-stream" {
+                            return next.call(request).await;
+                        }
+                        let drop_scope = DropScope {
+                            runtime,
+                            name: "fixture.native.stream.drop",
+                        };
+                        let stream = next.call(request).await?;
+                        let stream: LlmJsonAsyncStream = Box::pin(stream.map(move |chunk| {
+                            let _ = &drop_scope;
+                            chunk
+                        }));
+                        Ok(stream)
+                    }
                 }
-            }
-        })?;
+            },
+        )?;
 
         Ok(())
     }
