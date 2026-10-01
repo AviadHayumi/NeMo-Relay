@@ -79,6 +79,7 @@ impl MiddlewareContinuationContext {
         Ok(Self {
             active_event: self
                 .active_event
+                .clone()
                 .map(|active_event| rebind_active_event_to_stack(active_event, &scope_stack)),
             scope_stack,
             active_event_trace_context: self.active_event_trace_context.clone(),
@@ -107,7 +108,7 @@ impl MiddlewareContinuationContext {
 
         let previous = install_thread_continuation_context(
             &self.scope_stack,
-            self.active_event,
+            self.active_event.clone(),
             self.active_event_trace_context.clone(),
         );
         let _restore = RestoreThreadContext(Some(previous));
@@ -138,7 +139,7 @@ impl MiddlewareContinuationContext {
         let published =
             with_task_nested_publication_buffer(self.publication_buffer.clone(), published);
         let active = async {
-            match self.active_event {
+            match self.active_event.clone() {
                 Some(active_event) => {
                     with_anchored_active_event(
                         active_event,

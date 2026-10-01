@@ -2491,6 +2491,75 @@ fn thread_active_event_applies_only_at_the_captured_stack_top() {
 }
 
 #[test]
+fn thread_stack_setters_clear_context_only_when_the_stack_allocation_changes() {
+    let _restore = ThreadScopeStackRestore::capture();
+    let runtime = Runtime::new().unwrap();
+    let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+    let install_event = |event_uuid| {
+        let trace_context = crate::api::runtime::scope_stack::W3cTraceContext::new(
+            traceparent,
+            Some("vendor=value".into()),
+        )
+        .expect("trace context should be valid");
+        runtime.block_on(
+            crate::api::runtime::scope_stack::with_active_event_trace_context(
+                event_uuid,
+                Some(trace_context),
+                async {
+                    sync_thread_active_event_for_stack(&current_scope_stack());
+                },
+            ),
+        );
+    };
+    let assert_event = |expected| {
+        assert_eq!(active_event_uuid(), expected);
+        assert_eq!(
+            crate::api::runtime::scope_stack::active_event_trace_context()
+                .map(|context| context.traceparent().to_owned()),
+            expected.map(|_| traceparent.to_string())
+        );
+    };
+
+    let explicit_stack = create_scope_stack();
+    set_thread_scope_stack(explicit_stack.clone());
+    let explicit_event = uuid::Uuid::now_v7();
+    install_event(explicit_event);
+    set_thread_scope_stack(explicit_stack);
+    assert_event(Some(explicit_event));
+
+    let synchronized_stack = create_scope_stack();
+    let synchronized_top = synchronized_stack
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+        .top()
+        .uuid;
+    set_thread_scope_stack(synchronized_stack.clone());
+    assert_event(None);
+    assert_eq!(
+        crate::api::shared::resolve_parent_uuid(None),
+        Some(synchronized_top)
+    );
+
+    let synchronized_event = uuid::Uuid::now_v7();
+    install_event(synchronized_event);
+    sync_thread_scope_stack(synchronized_stack);
+    assert_event(Some(synchronized_event));
+
+    let replacement = create_scope_stack();
+    let replacement_top = replacement
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+        .top()
+        .uuid;
+    sync_thread_scope_stack(replacement);
+    assert_event(None);
+    assert_eq!(
+        crate::api::shared::resolve_parent_uuid(None),
+        Some(replacement_top)
+    );
+}
+
+#[test]
 fn restored_thread_active_event_rebases_after_its_stack_anchor_closes() {
     let _restore = ThreadScopeStackRestore::capture();
     set_thread_scope_stack(create_scope_stack());

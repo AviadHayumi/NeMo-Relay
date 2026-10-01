@@ -8,10 +8,10 @@
 //! can use this module to inspect the active scope chain or propagate scope
 //! context into worker threads.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, Weak};
 
 use opentelemetry::propagation::TextMapPropagator;
 use opentelemetry::trace::{SpanContext, TraceContextExt, TraceFlags, TraceState};
@@ -647,11 +647,11 @@ impl Default for ScopeStack {
 /// concurrent readers.
 pub type ScopeStackHandle = Arc<RwLock<ScopeStack>>;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct AnchoredActiveEvent {
     event_uuid: Uuid,
-    // Propagated stacks may share a root UUID, so identify the captured Arc allocation.
-    stack_identity: usize,
+    // Propagated stacks may share a root UUID, so retain the captured Arc allocation identity.
+    scope_stack: Weak<RwLock<ScopeStack>>,
     anchor_scope_uuid: Uuid,
 }
 
@@ -1075,10 +1075,10 @@ pub(crate) async fn with_active_event_trace_context<T>(
     trace_context: Option<W3cTraceContext>,
     future: impl Future<Output = T>,
 ) -> T {
-    let (stack_identity, anchor_scope_uuid) = scope_stack_identity_and_anchor();
+    let (scope_stack, anchor_scope_uuid) = scope_stack_identity_and_anchor();
     let active_event = AnchoredActiveEvent {
         event_uuid: uuid,
-        stack_identity,
+        scope_stack,
         anchor_scope_uuid,
     };
     with_anchored_active_event(active_event, trace_context, future).await
@@ -1099,7 +1099,7 @@ pub(crate) async fn with_anchored_active_event<T>(
 
 pub(crate) fn capture_anchored_active_event() -> Option<AnchoredActiveEvent> {
     ACTIVE_EVENT
-        .try_with(|event| *event)
+        .try_with(Clone::clone)
         .ok()
         .or_else(thread_active_event)
 }
@@ -1113,7 +1113,7 @@ pub(crate) fn rebind_active_event_to_stack(
         .unwrap_or_else(|error| error.into_inner());
     AnchoredActiveEvent {
         event_uuid: active_event.event_uuid,
-        stack_identity: Arc::as_ptr(scope_stack) as usize,
+        scope_stack: Arc::downgrade(scope_stack),
         anchor_scope_uuid: if guard.find(&active_event.anchor_scope_uuid).is_some() {
             active_event.anchor_scope_uuid
         } else {
@@ -1140,9 +1140,10 @@ pub(crate) fn active_event_trace_context() -> Option<W3cTraceContext> {
 }
 
 fn thread_active_event() -> Option<AnchoredActiveEvent> {
-    let mut event = THREAD_ACTIVE_EVENT.with(Cell::get)?;
+    let mut event = THREAD_ACTIVE_EVENT.with(|active| active.borrow().clone())?;
     let stack = current_scope_stack();
-    if event.stack_identity != Arc::as_ptr(&stack) as usize {
+    let event_stack = event.scope_stack.upgrade()?;
+    if !Arc::ptr_eq(&event_stack, &stack) {
         return None;
     }
     let guard = stack.read().unwrap_or_else(|error| error.into_inner());
@@ -1151,7 +1152,7 @@ fn thread_active_event() -> Option<AnchoredActiveEvent> {
             return None;
         }
         event.anchor_scope_uuid = guard.top().uuid;
-        THREAD_ACTIVE_EVENT.with(|active| active.set(Some(event)));
+        THREAD_ACTIVE_EVENT.with(|active| *active.borrow_mut() = Some(event.clone()));
     }
     Some(event)
 }
@@ -1169,7 +1170,7 @@ thread_local! {
     /// Whether the current thread explicitly owns a scope stack.
     static THREAD_SCOPE_STACK_EXPLICIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Managed event propagated into a foreign executor with the thread scope binding.
-    static THREAD_ACTIVE_EVENT: Cell<Option<AnchoredActiveEvent>> = const { Cell::new(None) };
+    static THREAD_ACTIVE_EVENT: RefCell<Option<AnchoredActiveEvent>> = const { RefCell::new(None) };
     /// Exact W3C context associated with the propagated managed event.
     static THREAD_ACTIVE_EVENT_TRACE_CONTEXT: RefCell<Option<W3cTraceContext>> = const { RefCell::new(None) };
 }
@@ -1241,6 +1242,7 @@ pub fn with_scope_stack<T>(handle: ScopeStackHandle, f: impl FnOnce() -> T) -> T
 /// # Notes
 /// Use this when propagating an existing scope stack into worker threads.
 pub fn set_thread_scope_stack(handle: ScopeStackHandle) {
+    clear_thread_active_event_for_stack_change(&handle);
     THREAD_SCOPE_STACK.with(|stack| *stack.borrow_mut() = handle);
     THREAD_SCOPE_STACK_EXPLICIT.with(|flag| flag.set(true));
 }
@@ -1260,7 +1262,7 @@ pub fn capture_thread_scope_stack() -> ThreadScopeStackBinding {
     ThreadScopeStackBinding {
         stack,
         explicit,
-        active_event: THREAD_ACTIVE_EVENT.with(Cell::get),
+        active_event: THREAD_ACTIVE_EVENT.with(|event| event.borrow().clone()),
         active_event_trace_context: THREAD_ACTIVE_EVENT_TRACE_CONTEXT
             .with(|context| context.borrow().clone()),
     }
@@ -1276,7 +1278,7 @@ pub fn capture_thread_scope_stack() -> ThreadScopeStackBinding {
 pub fn restore_thread_scope_stack(binding: ThreadScopeStackBinding) {
     THREAD_SCOPE_STACK.with(|stack| *stack.borrow_mut() = binding.stack);
     THREAD_SCOPE_STACK_EXPLICIT.with(|flag| flag.set(binding.explicit));
-    THREAD_ACTIVE_EVENT.with(|event| event.set(binding.active_event));
+    THREAD_ACTIVE_EVENT.with(|event| *event.borrow_mut() = binding.active_event);
     THREAD_ACTIVE_EVENT_TRACE_CONTEXT
         .with(|context| *context.borrow_mut() = binding.active_event_trace_context);
 }
@@ -1290,7 +1292,8 @@ pub(crate) fn install_thread_continuation_context(
     let previous = capture_thread_scope_stack();
     sync_thread_scope_stack(scope_stack.clone());
     THREAD_ACTIVE_EVENT.with(|event| {
-        event.set(active_event.map(|event| rebind_active_event_to_stack(event, scope_stack)))
+        *event.borrow_mut() =
+            active_event.map(|event| rebind_active_event_to_stack(event, scope_stack));
     });
     THREAD_ACTIVE_EVENT_TRACE_CONTEXT
         .with(|context| *context.borrow_mut() = active_event_trace_context);
@@ -1312,7 +1315,16 @@ pub(crate) fn install_thread_continuation_context(
 /// Python bindings use this to mirror `ContextVar` state into Rust without
 /// forcing `scope_stack_active()` to become `true` for the thread.
 pub fn sync_thread_scope_stack(handle: ScopeStackHandle) {
+    clear_thread_active_event_for_stack_change(&handle);
     THREAD_SCOPE_STACK.with(|stack| *stack.borrow_mut() = handle);
+}
+
+fn clear_thread_active_event_for_stack_change(handle: &ScopeStackHandle) {
+    let stack_changed = THREAD_SCOPE_STACK.with(|current| !Arc::ptr_eq(&current.borrow(), handle));
+    if stack_changed {
+        THREAD_ACTIVE_EVENT.with(|event| *event.borrow_mut() = None);
+        THREAD_ACTIVE_EVENT_TRACE_CONTEXT.with(|context| *context.borrow_mut() = None);
+    }
 }
 
 /// Synchronize the task-local managed event onto an isolated thread stack.
@@ -1324,15 +1336,17 @@ pub fn sync_thread_scope_stack(handle: ScopeStackHandle) {
 pub(crate) fn sync_thread_active_event_for_stack(scope_stack: &ScopeStackHandle) {
     let active_event = capture_anchored_active_event()
         .map(|active_event| rebind_active_event_to_stack(active_event, scope_stack));
-    let trace_context = active_event.and_then(|_| active_event_trace_context());
-    THREAD_ACTIVE_EVENT.with(|event| event.set(active_event));
+    let trace_context = active_event
+        .as_ref()
+        .and_then(|_| active_event_trace_context());
+    THREAD_ACTIVE_EVENT.with(|event| *event.borrow_mut() = active_event);
     THREAD_ACTIVE_EVENT_TRACE_CONTEXT.with(|context| *context.borrow_mut() = trace_context);
 }
 
-fn scope_stack_identity_and_anchor() -> (usize, Uuid) {
+fn scope_stack_identity_and_anchor() -> (Weak<RwLock<ScopeStack>>, Uuid) {
     let stack = current_scope_stack();
     let guard = stack.read().unwrap_or_else(|error| error.into_inner());
-    (Arc::as_ptr(&stack) as usize, guard.top().uuid)
+    (Arc::downgrade(&stack), guard.top().uuid)
 }
 
 /// Report whether the current context has an explicitly active scope stack.
