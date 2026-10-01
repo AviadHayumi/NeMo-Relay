@@ -1619,12 +1619,14 @@ async fn callback_timeout_sends_explicit_worker_cancellation() {
         |_| Box::pin(tokio_stream::empty()),
     )
     .await;
-    let request = callback.base_request(
-        "timeout",
-        RegistrationSurface::ToolRequestIntercept,
-        None,
-        Some(invoke_request_payload_tool("tool", json!({}), None)),
-    );
+    let request = callback
+        .base_request(
+            "timeout",
+            RegistrationSurface::ToolRequestIntercept,
+            None,
+            Some(invoke_request_payload_tool("tool", json!({}), None)),
+        )
+        .expect("worker invocation request should build");
     let invocation_id = request.invocation_id.clone();
 
     let callback_task = callback.clone();
@@ -1683,12 +1685,14 @@ async fn dropping_callback_future_cancels_worker_and_cleans_host_state() {
             Box::pin(async move { Ok(ToolExecutionResult::new(value)) })
         })))
         .expect("continuation should insert");
-    let request = callback.base_request(
-        "cancel",
-        RegistrationSurface::ToolExecutionIntercept,
-        Some(continuation_id),
-        Some(invoke_request_payload_tool("tool", json!({}), None)),
-    );
+    let request = callback
+        .base_request(
+            "cancel",
+            RegistrationSurface::ToolExecutionIntercept,
+            Some(continuation_id),
+            Some(invoke_request_payload_tool("tool", json!({}), None)),
+        )
+        .expect("worker invocation request should build");
     let scope_stack_id = request
         .scope
         .as_ref()
@@ -1739,7 +1743,14 @@ async fn dropping_callback_future_cancels_worker_and_cleans_host_state() {
     );
     let overlapping_scope_stack_id = callback
         .host_state
-        .insert_invocation_scope_stack(invocation_stack.clone(), None);
+        .insert_invocation_scope_stack(invocation_stack.clone(), None)
+        .expect("overlapping invocation scope stack should insert");
+    let overlapping_stack = callback
+        .host_state
+        .stack(&overlapping_scope_stack_id)
+        .expect("overlapping scope stack lookup should succeed")
+        .expect("overlapping scope stack should exist");
+    assert!(!Arc::ptr_eq(&invocation_stack, &overlapping_stack));
     let invocation_id = request.invocation_id.clone();
     let callback_task = callback.clone();
     let task = tokio::spawn(async move { callback_task.invoke_async(request).await });
@@ -1788,6 +1799,14 @@ async fn dropping_callback_future_cancels_worker_and_cleans_host_state() {
             .expect("invocation scope stack lock")
             .scopes()
             .len(),
+        baseline_depth
+    );
+    assert_eq!(
+        overlapping_stack
+            .read()
+            .expect("overlapping scope stack lock")
+            .scopes()
+            .len(),
         baseline_depth + 2
     );
     callback
@@ -1817,6 +1836,14 @@ async fn dropping_callback_future_cancels_worker_and_cleans_host_state() {
             .len(),
         baseline_depth
     );
+    assert_eq!(
+        overlapping_stack
+            .read()
+            .expect("overlapping scope stack lock")
+            .scopes()
+            .len(),
+        baseline_depth + 2
+    );
     callback
         .host_state
         .cleanup_invocation_scope_stack(&scope_stack_id);
@@ -1841,9 +1868,19 @@ fn invocation_cleanup_releases_host_state_locks_before_unwinding() {
         AUTH_TOKEN.into(),
     ));
     let stack = crate::api::runtime::create_scope_stack();
-    let baseline_depth = stack.read().expect("scope stack lock").scopes().len();
-    let scope_stack_id = state.insert_invocation_scope_stack(stack.clone(), None);
-    with_scope_stack(stack.clone(), || {
+    let scope_stack_id = state
+        .insert_invocation_scope_stack(stack.clone(), None)
+        .expect("invocation scope stack should insert");
+    let invocation_stack = state
+        .stack(&scope_stack_id)
+        .expect("invocation scope stack lookup should succeed")
+        .expect("invocation scope stack should exist");
+    let baseline_depth = invocation_stack
+        .read()
+        .expect("scope stack lock")
+        .scopes()
+        .len();
+    with_scope_stack(invocation_stack.clone(), || {
         push_scope(
             PushScopeParams::builder()
                 .name("cleanup-lock-test")
@@ -1853,7 +1890,7 @@ fn invocation_cleanup_releases_host_state_locks_before_unwinding() {
     })
     .expect("worker scope should push");
 
-    let stack_guard = stack.write().expect("scope stack lock");
+    let stack_guard = invocation_stack.write().expect("scope stack lock");
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let cleanup_state = state.clone();
     let cleanup = std::thread::spawn(move || {
@@ -1867,7 +1904,7 @@ fn invocation_cleanup_releases_host_state_locks_before_unwinding() {
             .lock()
             .expect("scope cleanup lock")
             .iter()
-            .any(|handle| Arc::ptr_eq(handle, &stack));
+            .any(|handle| Arc::ptr_eq(handle, &invocation_stack));
         if cleanup_registered
             && state.scope_stacks.try_lock().is_ok()
             && state.pending_scope_cleanups.try_lock().is_ok()
@@ -1895,7 +1932,11 @@ fn invocation_cleanup_releases_host_state_locks_before_unwinding() {
             .is_empty()
     );
     assert_eq!(
-        stack.read().expect("scope stack lock").scopes().len(),
+        invocation_stack
+            .read()
+            .expect("scope stack lock")
+            .scopes()
+            .len(),
         baseline_depth
     );
 }
@@ -3331,6 +3372,7 @@ async fn worker_continuations_use_the_scope_stack_selected_for_each_call() {
             StoredScopeStack {
                 handle: stack,
                 publication_buffer: None,
+                continuation_context: None,
                 invocation_base_depth: None,
             },
         );
@@ -3371,6 +3413,188 @@ async fn worker_continuations_use_the_scope_stack_selected_for_each_call() {
 
     assert_eq!(decode(first.unwrap()), json!(expected[0]));
     assert_eq!(decode(second.unwrap()), json!(expected[1]));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn overlapping_worker_invocations_isolate_scope_stack_mutations() {
+    let state = Arc::new(WorkerHostRuntimeState::new(
+        ACTIVATION_ID.into(),
+        AUTH_TOKEN.into(),
+    ));
+    let service = WorkerHostRuntimeService {
+        state: state.clone(),
+    };
+    let source_stack = crate::api::runtime::create_scope_stack();
+    let first_stack_id = state
+        .insert_invocation_scope_stack(source_stack.clone(), None)
+        .expect("first invocation scope stack should insert");
+    let second_stack_id = state
+        .insert_invocation_scope_stack(source_stack, None)
+        .expect("second invocation scope stack should insert");
+    let first_stack = state
+        .stack(&first_stack_id)
+        .expect("first invocation scope stack lookup should succeed")
+        .expect("first invocation scope stack should exist");
+    let second_stack = state
+        .stack(&second_stack_id)
+        .expect("second invocation scope stack lookup should succeed")
+        .expect("second invocation scope stack should exist");
+    assert!(!Arc::ptr_eq(&first_stack, &second_stack));
+
+    let next_barrier = Arc::new(tokio::sync::Barrier::new(2));
+    let continuation_id = state
+        .insert_continuation(Continuation::tool(Arc::new(move |_| {
+            let next_barrier = next_barrier.clone();
+            Box::pin(async move {
+                next_barrier.wait().await;
+                tokio::task::yield_now().await;
+                Ok(ToolExecutionResult::new(json!(
+                    crate::api::runtime::task_scope_top().uuid.to_string()
+                )))
+            })
+        })))
+        .expect("tool continuation should insert");
+    let service = Arc::new(service);
+    let invoke = |scope_stack_id: String, name: &'static str| {
+        let service = service.clone();
+        let continuation_id = continuation_id.clone();
+        tokio::spawn(async move {
+            let response = service
+                .push_scope(Request::new(PushScopeRequest {
+                    activation_id: ACTIVATION_ID.into(),
+                    auth_token: AUTH_TOKEN.into(),
+                    scope: Some(ScopeContext {
+                        scope_stack_id: scope_stack_id.clone(),
+                        parent_scope_id: String::new(),
+                    }),
+                    name: name.into(),
+                    scope_type: ProtoScopeType::Custom as i32,
+                    data: None,
+                    metadata: None,
+                    input: None,
+                    timestamp_unix_micros: None,
+                }))
+                .await
+                .expect("worker scope should push")
+                .into_inner();
+            assert!(response.error.is_none(), "{:?}", response.error);
+            let expected = response
+                .scope_handle_id
+                .strip_prefix("scope-")
+                .expect("worker scope handle should use the documented prefix")
+                .to_owned();
+            let response = service
+                .tool_next(Request::new(ToolNextRequest {
+                    activation_id: ACTIVATION_ID.into(),
+                    auth_token: AUTH_TOKEN.into(),
+                    continuation_id,
+                    value: Some(json_envelope(JSON_SCHEMA, &json!({})).expect("json envelope")),
+                    scope: Some(ScopeContext {
+                        scope_stack_id,
+                        parent_scope_id: String::new(),
+                    }),
+                }))
+                .await
+                .expect("worker continuation should run")
+                .into_inner();
+            let value = response.value.expect("tool next should return a value");
+            let observed =
+                decode_json_value::<Json>(value.result.as_ref().expect("tool next result"))
+                    .expect("tool next result should decode");
+            (expected, observed)
+        })
+    };
+
+    let (first, second) = tokio::join!(
+        invoke(first_stack_id.clone(), "worker-overlap-first"),
+        invoke(second_stack_id.clone(), "worker-overlap-second"),
+    );
+    let (first_expected, first_observed) = first.expect("first invocation task should finish");
+    let (second_expected, second_observed) = second.expect("second invocation task should finish");
+    assert_ne!(first_expected, second_expected);
+    assert_eq!(first_observed, json!(first_expected));
+    assert_eq!(second_observed, json!(second_expected));
+
+    state.remove_continuation(&continuation_id);
+    state.cleanup_invocation_scope_stack(&first_stack_id);
+    state.cleanup_invocation_scope_stack(&second_stack_id);
+}
+
+#[tokio::test]
+async fn worker_runtime_scope_calls_restore_managed_parent_and_trace_context() {
+    let state = Arc::new(WorkerHostRuntimeState::new(
+        ACTIVATION_ID.into(),
+        AUTH_TOKEN.into(),
+    ));
+    let service = WorkerHostRuntimeService {
+        state: state.clone(),
+    };
+    let source_stack = crate::api::runtime::create_scope_stack();
+    let managed_event_uuid = uuid::Uuid::now_v7();
+    let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+    let trace_context = crate::api::runtime::scope_stack::W3cTraceContext::new(
+        traceparent,
+        Some("vendor=value".into()),
+    )
+    .expect("trace context should be valid");
+    let scope_stack_id = crate::api::runtime::scope_stack::TASK_SCOPE_STACK
+        .scope(
+            source_stack.clone(),
+            crate::api::runtime::scope_stack::with_active_event_trace_context(
+                managed_event_uuid,
+                Some(trace_context),
+                async {
+                    state
+                        .insert_invocation_scope_stack(source_stack, None)
+                        .expect("invocation scope stack should insert")
+                },
+            ),
+        )
+        .await;
+    let context = state
+        .invocation_context(&scope_stack_id)
+        .expect("invocation context lookup should succeed")
+        .expect("invocation context should exist");
+    let observed_traceparent = context.run(|| {
+        crate::api::runtime::scope_stack::active_event_trace_context()
+            .map(|context| context.traceparent().to_owned())
+    });
+    assert_eq!(observed_traceparent.as_deref(), Some(traceparent));
+
+    let parent_response = service
+        .push_scope(Request::new(PushScopeRequest {
+            activation_id: ACTIVATION_ID.into(),
+            auth_token: AUTH_TOKEN.into(),
+            scope: Some(ScopeContext {
+                scope_stack_id: scope_stack_id.clone(),
+                parent_scope_id: String::new(),
+            }),
+            name: "worker-managed-parent".into(),
+            scope_type: ProtoScopeType::Custom as i32,
+            data: None,
+            metadata: None,
+            input: None,
+            timestamp_unix_micros: None,
+        }))
+        .await
+        .expect("managed-parent scope should push")
+        .into_inner();
+    assert!(
+        parent_response.error.is_none(),
+        "{:?}",
+        parent_response.error
+    );
+    let parent_handle = state
+        .scope_handles
+        .lock()
+        .expect("scope handle lock")
+        .get(&parent_response.scope_handle_id)
+        .expect("parent scope handle should be retained")
+        .handle
+        .clone();
+    assert_eq!(parent_handle.parent_uuid, Some(managed_event_uuid));
+
+    state.cleanup_invocation_scope_stack(&scope_stack_id);
 }
 
 fn valid_llm_request() -> LlmRequest {
