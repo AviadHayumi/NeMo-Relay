@@ -137,7 +137,8 @@ fn native_async_release_defers_library_guard_drop_to_host_reaper() {
         next_invoked: AtomicBool::new(false),
         next_abort: Mutex::new(None),
         continuation_aborts: Mutex::new(HashMap::new()),
-        codec: None,
+        request_codec: None,
+        response_codec: None,
         before_settlement_lock: None,
         _callback_user_data: Some(callback_user_data),
     });
@@ -634,55 +635,55 @@ fn assert_native_digest_edges() {
 
 fn assert_native_host_api_versions() {
     let current = native_host_api();
+    let frozen_v6 = native_host_api_v6();
     let frozen_v5 = native_host_api_v5();
     let frozen_v4 = native_host_api_v4();
     let frozen_v3 = native_host_api_v3();
     let legacy = native_host_api_v2();
-    assert!(!current.is_null());
-    assert!(!frozen_v5.is_null());
-    assert!(!frozen_v4.is_null());
-    assert!(!frozen_v3.is_null());
-    assert!(!legacy.is_null());
-    assert_eq!(
-        unsafe { (*current).abi_version },
-        NEMO_RELAY_NATIVE_ABI_VERSION
+    assert_native_host_api_descriptor(
+        current,
+        NEMO_RELAY_NATIVE_ABI_VERSION,
+        std::mem::size_of::<NemoRelayNativeHostApiV7>(),
     );
-    assert_eq!(unsafe { (*frozen_v3).abi_version }, 3);
-    assert_eq!(
-        unsafe { (*frozen_v5).abi_version },
-        NEMO_RELAY_NATIVE_ABI_VERSION_TOOL_EXECUTION_CONTEXT
+    assert_native_host_api_descriptor(
+        frozen_v6,
+        NEMO_RELAY_NATIVE_ABI_VERSION_LOGGING,
+        std::mem::size_of::<NemoRelayNativeHostApiV6>(),
     );
-    assert_eq!(
-        unsafe { (*frozen_v4).abi_version },
-        NEMO_RELAY_NATIVE_ABI_VERSION_RUNTIME_CONTROL
+    assert_native_host_api_descriptor(
+        frozen_v5,
+        NEMO_RELAY_NATIVE_ABI_VERSION_TOOL_EXECUTION_CONTEXT,
+        std::mem::size_of::<NemoRelayNativeHostApiV5>(),
     );
-    assert_eq!(
-        unsafe { (*legacy).abi_version },
-        NEMO_RELAY_NATIVE_ABI_VERSION_LEGACY
+    assert_native_host_api_descriptor(
+        frozen_v4,
+        NEMO_RELAY_NATIVE_ABI_VERSION_RUNTIME_CONTROL,
+        std::mem::size_of::<NemoRelayNativeHostApiV4>(),
     );
-    assert_eq!(
-        unsafe { (*current).struct_size },
-        std::mem::size_of::<NemoRelayNativeHostApiV6>()
+    assert_native_host_api_descriptor(
+        frozen_v3,
+        3,
+        std::mem::size_of::<NemoRelayNativeHostApiV3>(),
     );
-    assert_eq!(
-        unsafe { (*frozen_v5).struct_size },
-        std::mem::size_of::<NemoRelayNativeHostApiV5>()
+    assert_native_host_api_descriptor(
+        legacy,
+        NEMO_RELAY_NATIVE_ABI_VERSION_LEGACY,
+        std::mem::size_of::<NemoRelayNativeHostApiV1>(),
     );
-    assert_eq!(
-        unsafe { (*frozen_v4).struct_size },
-        std::mem::size_of::<NemoRelayNativeHostApiV4>()
-    );
-    assert_eq!(
-        unsafe { (*frozen_v3).struct_size },
-        std::mem::size_of::<NemoRelayNativeHostApiV3>()
-    );
-    assert_eq!(
-        unsafe { (*legacy).struct_size },
-        std::mem::size_of::<NemoRelayNativeHostApiV1>()
-    );
+    assert_native_host_api_v7_layout();
     assert_native_host_api_v6_layout();
     assert_native_host_api_v5_layout();
     assert_native_host_api_v4_layout();
+}
+
+fn assert_native_host_api_descriptor(
+    host: *const NemoRelayNativeHostApiV1,
+    expected_version: u32,
+    expected_size: usize,
+) {
+    assert!(!host.is_null());
+    assert_eq!(unsafe { (*host).abi_version }, expected_version);
+    assert_eq!(unsafe { (*host).struct_size }, expected_size);
 }
 
 fn assert_native_host_api_v4_layout() {
@@ -804,6 +805,71 @@ fn assert_native_host_api_v6_layout() {
     }
 }
 
+fn assert_native_host_api_v7_layout() {
+    #[cfg(target_pointer_width = "64")]
+    {
+        assert_eq!(std::mem::align_of::<NemoRelayNativeHostApiV7>(), 8);
+        assert_eq!(std::mem::size_of::<NemoRelayNativeHostApiV7>(), 648);
+        assert_eq!(std::mem::offset_of!(NemoRelayNativeHostApiV7, v6), 0);
+        assert_eq!(
+            std::mem::offset_of!(
+                NemoRelayNativeHostApiV7,
+                plugin_context_register_async_llm_execution_intercept
+            ),
+            616
+        );
+        assert_eq!(
+            std::mem::offset_of!(NemoRelayNativeHostApiV7, async_stream_retain),
+            624
+        );
+        assert_eq!(
+            std::mem::offset_of!(
+                NemoRelayNativeHostApiV7,
+                async_stream_llm_request_codec_decode
+            ),
+            632
+        );
+        assert_eq!(
+            std::mem::offset_of!(
+                NemoRelayNativeHostApiV7,
+                async_stream_llm_request_codec_encode
+            ),
+            640
+        );
+    }
+    #[cfg(target_pointer_width = "32")]
+    {
+        assert_eq!(std::mem::align_of::<NemoRelayNativeHostApiV7>(), 4);
+        assert_eq!(std::mem::size_of::<NemoRelayNativeHostApiV7>(), 320);
+        assert_eq!(std::mem::offset_of!(NemoRelayNativeHostApiV7, v6), 0);
+        assert_eq!(
+            std::mem::offset_of!(
+                NemoRelayNativeHostApiV7,
+                plugin_context_register_async_llm_execution_intercept
+            ),
+            304
+        );
+        assert_eq!(
+            std::mem::offset_of!(NemoRelayNativeHostApiV7, async_stream_retain),
+            308
+        );
+        assert_eq!(
+            std::mem::offset_of!(
+                NemoRelayNativeHostApiV7,
+                async_stream_llm_request_codec_decode
+            ),
+            312
+        );
+        assert_eq!(
+            std::mem::offset_of!(
+                NemoRelayNativeHostApiV7,
+                async_stream_llm_request_codec_encode
+            ),
+            316
+        );
+    }
+}
+
 #[tokio::test]
 async fn native_async_wait_and_rejection_cover_dropped_and_aborted_continuations() {
     let (sender, receiver) = tokio::sync::oneshot::channel::<FlowResult<Json>>();
@@ -815,7 +881,8 @@ async fn native_async_wait_and_rejection_cover_dropped_and_aborted_continuations
             next_invoked: AtomicBool::new(false),
             next_abort: Mutex::new(None),
             continuation_aborts: Mutex::new(HashMap::new()),
-            codec: None,
+            request_codec: None,
+            response_codec: None,
             before_settlement_lock: None,
             _callback_user_data: None,
         }),
@@ -837,7 +904,8 @@ async fn native_async_wait_and_rejection_cover_dropped_and_aborted_continuations
         next_invoked: AtomicBool::new(true),
         next_abort: Mutex::new(Some(abort)),
         continuation_aborts: Mutex::new(HashMap::new()),
-        codec: None,
+        request_codec: None,
+        response_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -872,6 +940,7 @@ fn native_stream_callback_guard_covers_terminal_drop_modes() {
         backpressured: AtomicBool::new(false),
         downstream_aborts: Mutex::new(HashMap::new()),
         settlement: Mutex::new(()),
+        request_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -931,6 +1000,7 @@ async fn native_async_stream_forwarding_reports_conversion_and_stream_errors() {
             backpressured: AtomicBool::new(false),
             downstream_aborts: Mutex::new(HashMap::new()),
             settlement: Mutex::new(()),
+            request_codec: None,
             before_settlement_lock: None,
             _callback_user_data: None,
         })
@@ -1145,7 +1215,8 @@ fn accepted_native_callbacks_settle_when_cancelled_before_first_poll() {
         next_invoked: AtomicBool::new(false),
         next_abort: Mutex::new(None),
         continuation_aborts: Mutex::new(HashMap::new()),
-        codec: None,
+        request_codec: None,
+        response_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -1191,6 +1262,7 @@ fn accepted_native_callbacks_settle_when_cancelled_before_first_poll() {
         backpressured: AtomicBool::new(false),
         downstream_aborts: Mutex::new(HashMap::new()),
         settlement: Mutex::new(()),
+        request_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -1282,6 +1354,7 @@ fn native_async_stream_entrypoints_cover_closed_full_and_settled_channels() {
         backpressured: AtomicBool::new(false),
         downstream_aborts: Mutex::new(HashMap::new()),
         settlement: Mutex::new(()),
+        request_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -1309,6 +1382,7 @@ fn native_async_stream_entrypoints_cover_closed_full_and_settled_channels() {
         backpressured: AtomicBool::new(false),
         downstream_aborts: Mutex::new(HashMap::new()),
         settlement: Mutex::new(()),
+        request_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -1334,6 +1408,7 @@ fn native_async_stream_entrypoints_cover_closed_full_and_settled_channels() {
         backpressured: AtomicBool::new(false),
         downstream_aborts: Mutex::new(HashMap::new()),
         settlement: Mutex::new(()),
+        request_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -1357,6 +1432,7 @@ fn native_async_stream_entrypoints_cover_closed_full_and_settled_channels() {
         backpressured: AtomicBool::new(false),
         downstream_aborts: Mutex::new(HashMap::new()),
         settlement: Mutex::new(()),
+        request_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -1433,6 +1509,7 @@ async fn native_async_stream_next_entrypoint_validates_handle_kind_and_request()
         backpressured: AtomicBool::new(false),
         downstream_aborts: Mutex::new(HashMap::new()),
         settlement: Mutex::new(()),
+        request_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -1530,6 +1607,7 @@ unsafe extern "C" fn invoke_native_next_then_return_state(
 unsafe extern "C" fn invoke_native_stream_next_then_return_state(
     user_data: *mut c_void,
     invocation_json: *const NemoRelayNativeString,
+    _context: *const NemoRelayNativeLlmExecutionContext,
     next: *const NemoRelayNativeAsyncNext,
     stream: *const NemoRelayNativeAsyncStream,
 ) -> u32 {
@@ -1574,6 +1652,7 @@ unsafe extern "C" fn invoke_native_stream_next_then_return_state(
 unsafe extern "C" fn invoke_detached_next_and_finish_replacement_stream(
     user_data: *mut c_void,
     invocation_json: *const NemoRelayNativeString,
+    _context: *const NemoRelayNativeLlmExecutionContext,
     next: *const NemoRelayNativeAsyncNext,
     stream: *const NemoRelayNativeAsyncStream,
 ) -> u32 {
@@ -1808,7 +1887,7 @@ fn assert_native_json_output_and_host_api() {
     assert_eq!(host_api.abi_version, NEMO_RELAY_NATIVE_ABI_VERSION);
     assert_eq!(
         host_api.struct_size,
-        std::mem::size_of::<NemoRelayNativeHostApiV6>()
+        std::mem::size_of::<NemoRelayNativeHostApiV7>()
     );
 }
 
@@ -1847,7 +1926,8 @@ fn native_async_next_abi_runs_tool_llm_and_stream_continuations() {
             next_invoked: AtomicBool::new(false),
             next_abort: Mutex::new(None),
             continuation_aborts: Mutex::new(HashMap::new()),
-            codec: None,
+            request_codec: None,
+            response_codec: None,
             before_settlement_lock: None,
             _callback_user_data: None,
         });
@@ -1886,7 +1966,8 @@ fn native_async_next_abi_runs_tool_llm_and_stream_continuations() {
         next_invoked: AtomicBool::new(false),
         next_abort: Mutex::new(None),
         continuation_aborts: Mutex::new(HashMap::new()),
-        codec: None,
+        request_codec: None,
+        response_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -1947,7 +2028,8 @@ fn native_async_next_reports_a_revoked_continuation_without_calling_the_provider
         next_invoked: AtomicBool::new(false),
         next_abort: Mutex::new(None),
         continuation_aborts: Mutex::new(HashMap::new()),
-        codec: None,
+        request_codec: None,
+        response_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -2207,7 +2289,8 @@ fn owned_native_result_continuation_is_aborted_when_completion_is_cancelled() {
         next_invoked: AtomicBool::new(false),
         next_abort: Mutex::new(None),
         continuation_aborts: Mutex::new(HashMap::new()),
-        codec: None,
+        request_codec: None,
+        response_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -2497,7 +2580,8 @@ fn native_async_next_preserves_runtime_context_for_unary_and_stream_continuation
                                 next_invoked: AtomicBool::new(false),
                                 next_abort: Mutex::new(None),
                                 continuation_aborts: Mutex::new(HashMap::new()),
-                                codec: None,
+                                request_codec: None,
+                                response_codec: None,
                                 before_settlement_lock: None,
                                 _callback_user_data: None,
                             });
@@ -2556,6 +2640,7 @@ fn native_async_next_preserves_runtime_context_for_unary_and_stream_continuation
                                 backpressured: AtomicBool::new(false),
                                 downstream_aborts: Mutex::new(HashMap::new()),
                                 settlement: Mutex::new(()),
+                                request_codec: None,
                                 before_settlement_lock: None,
                                 _callback_user_data: None,
                             });
@@ -2743,7 +2828,8 @@ fn native_async_next_panics_settle_unary_and_stream_errors() {
         next_invoked: AtomicBool::new(false),
         next_abort: Mutex::new(None),
         continuation_aborts: Mutex::new(HashMap::new()),
-        codec: None,
+        request_codec: None,
+        response_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -2788,6 +2874,7 @@ fn native_async_next_panics_settle_unary_and_stream_errors() {
         backpressured: AtomicBool::new(false),
         downstream_aborts: Mutex::new(HashMap::new()),
         settlement: Mutex::new(()),
+        request_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -2864,7 +2951,8 @@ fn native_async_next_is_permanently_one_shot() {
         next_invoked: AtomicBool::new(false),
         next_abort: Mutex::new(None),
         continuation_aborts: Mutex::new(HashMap::new()),
-        codec: None,
+        request_codec: None,
+        response_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -2917,7 +3005,8 @@ fn cancelled_native_async_next_does_not_start_unary_or_stream_continuations() {
         next_invoked: AtomicBool::new(false),
         next_abort: Mutex::new(None),
         continuation_aborts: Mutex::new(HashMap::new()),
-        codec: None,
+        request_codec: None,
+        response_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -2950,6 +3039,7 @@ fn cancelled_native_async_next_does_not_start_unary_or_stream_continuations() {
         backpressured: AtomicBool::new(false),
         downstream_aborts: Mutex::new(HashMap::new()),
         settlement: Mutex::new(()),
+        request_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -3013,7 +3103,8 @@ fn malformed_llm_next_does_not_consume_the_completion() {
         next_invoked: AtomicBool::new(false),
         next_abort: Mutex::new(None),
         continuation_aborts: Mutex::new(HashMap::new()),
-        codec: None,
+        request_codec: None,
+        response_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -3063,6 +3154,7 @@ fn native_async_stream_next_supports_repeated_concurrent_calls() {
         backpressured: AtomicBool::new(false),
         downstream_aborts: Mutex::new(HashMap::new()),
         settlement: Mutex::new(()),
+        request_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -3180,6 +3272,7 @@ fn native_async_stream_settlement_rejects_late_next_and_aborts_in_flight_next() 
             backpressured: AtomicBool::new(false),
             downstream_aborts: Mutex::new(HashMap::new()),
             settlement: Mutex::new(()),
+            request_codec: None,
             before_settlement_lock: None,
             _callback_user_data: None,
         });
@@ -3301,6 +3394,7 @@ fn native_async_stream_next_stops_callbacks_after_false() {
         backpressured: AtomicBool::new(false),
         downstream_aborts: Mutex::new(HashMap::new()),
         settlement: Mutex::new(()),
+        request_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -3375,6 +3469,7 @@ fn native_async_stream_in_flight_cancellation_releases_callback_state() {
         backpressured: AtomicBool::new(false),
         downstream_aborts: Mutex::new(HashMap::new()),
         settlement: Mutex::new(()),
+        request_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -3457,6 +3552,7 @@ fn native_async_stream_cancellation_before_first_poll_releases_callback_state() 
         backpressured: AtomicBool::new(false),
         downstream_aborts: Mutex::new(HashMap::new()),
         settlement: Mutex::new(()),
+        request_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -3533,7 +3629,8 @@ fn native_async_completion_abi_rejects_invalid_duplicate_and_cancelled_settlemen
         next_invoked: AtomicBool::new(false),
         next_abort: Mutex::new(None),
         continuation_aborts: Mutex::new(HashMap::new()),
-        codec: None,
+        request_codec: None,
+        response_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -3570,7 +3667,8 @@ fn native_async_completion_abi_rejects_invalid_duplicate_and_cancelled_settlemen
         next_invoked: AtomicBool::new(false),
         next_abort: Mutex::new(None),
         continuation_aborts: Mutex::new(HashMap::new()),
-        codec: None,
+        request_codec: None,
+        response_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -3598,7 +3696,8 @@ fn completed_native_async_wait_is_not_marked_cancelled() {
         next_invoked: AtomicBool::new(false),
         next_abort: Mutex::new(None),
         continuation_aborts: Mutex::new(HashMap::new()),
-        codec: None,
+        request_codec: None,
+        response_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -3654,7 +3753,8 @@ fn native_async_completion_cancellation_wins_resolve_and_reject_settlement_races
             next_invoked: AtomicBool::new(false),
             next_abort: Mutex::new(None),
             continuation_aborts: Mutex::new(HashMap::new()),
-            codec: None,
+            request_codec: None,
+            response_codec: None,
             before_settlement_lock: Some(Arc::clone(&settlement_checkpoint)),
             _callback_user_data: None,
         });
@@ -3737,7 +3837,8 @@ fn cancelling_completion_aborts_pending_native_next() {
         next_invoked: AtomicBool::new(false),
         next_abort: Mutex::new(None),
         continuation_aborts: Mutex::new(HashMap::new()),
-        codec: None,
+        request_codec: None,
+        response_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -3836,7 +3937,7 @@ fn native_async_callback_contract_errors_abort_an_invoked_next() {
                         })
                     }
                 }))),
-                None,
+                NativeAsyncCodecCapabilities::default(),
             ))
             .unwrap_err();
 
@@ -3911,6 +4012,7 @@ fn native_async_stream_contract_errors_abort_an_invoked_next() {
                 headers: Map::new(),
                 content: Json::Null,
             },
+            LlmExecutionContext::default(),
             next,
         ));
         let error = match result {
@@ -3970,6 +4072,7 @@ fn native_replacement_stream_does_not_wait_for_a_detached_pending_next() {
                 headers: Map::new(),
                 content: Json::Null,
             },
+            LlmExecutionContext::default(),
             next,
         ))
         .expect("replacement stream must not wait for detached downstream construction");
@@ -4015,6 +4118,7 @@ fn native_async_stream_settlement_cannot_succeed_after_cancellation() {
             backpressured: AtomicBool::new(false),
             downstream_aborts: Mutex::new(HashMap::new()),
             settlement: Mutex::new(()),
+            request_codec: None,
             before_settlement_lock: Some(Arc::clone(&settlement_checkpoint)),
             _callback_user_data: None,
         });
@@ -4084,6 +4188,7 @@ fn native_async_stream_push_is_bounded_retryable_and_incremental() {
         backpressured: AtomicBool::new(false),
         downstream_aborts: Mutex::new(HashMap::new()),
         settlement: Mutex::new(()),
+        request_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -4813,6 +4918,7 @@ unsafe extern "C" fn noop_llm_execution(
     _user_data: *mut c_void,
     _name: *const NemoRelayNativeString,
     _request_json: *const NemoRelayNativeString,
+    _context: NemoRelayNativeLlmExecutionContext,
     _next_fn: NemoRelayNativeLlmNextFn,
     _next_ctx: *mut c_void,
     _out_json: *mut *mut NemoRelayNativeString,
@@ -4824,6 +4930,7 @@ unsafe extern "C" fn noop_llm_stream_execution(
     _user_data: *mut c_void,
     _name: *const NemoRelayNativeString,
     _request_json: *const NemoRelayNativeString,
+    _context: NemoRelayNativeLlmExecutionContext,
     _next_fn: NemoRelayNativeLlmStreamNextFn,
     _next_ctx: *mut c_void,
     _out_stream: *mut NemoRelayNativeLlmStreamV1,
@@ -5596,7 +5703,7 @@ fn native_callback_entry_uses_an_isolated_snapshot() {
                 user_data,
                 Json::Null,
                 None,
-                None,
+                NativeAsyncCodecCapabilities::default(),
             ),
         ),
     ));
@@ -5749,14 +5856,14 @@ fn concurrent_native_callbacks_close_scopes_on_isolated_stacks() {
                             user_data.clone(),
                             json!({"branch": 0}),
                             None,
-                            None,
+                            NativeAsyncCodecCapabilities::default(),
                         ),
                         invoke_native_async_callback(
                             interleave_native_callback_scopes,
                             user_data,
                             json!({"branch": 1}),
                             None,
-                            None,
+                            NativeAsyncCodecCapabilities::default(),
                         )
                     )
                 }),
@@ -5777,6 +5884,7 @@ fn concurrent_native_callbacks_close_scopes_on_isolated_stacks() {
 unsafe extern "C" fn interleave_native_stream_callback_scopes(
     user_data: *mut c_void,
     invocation_json: *const NemoRelayNativeString,
+    _context: *const NemoRelayNativeLlmExecutionContext,
     next: *const NemoRelayNativeAsyncNext,
     stream: *const NemoRelayNativeAsyncStream,
 ) -> u32 {
@@ -5841,6 +5949,7 @@ fn concurrent_native_stream_callbacks_close_scopes_on_isolated_stacks() {
                                     headers: Map::new(),
                                     content: json!({"branch": 0}),
                                 },
+                                LlmExecutionContext::default(),
                                 downstream.clone(),
                             ),
                             wrapped(
@@ -5849,6 +5958,7 @@ fn concurrent_native_stream_callbacks_close_scopes_on_isolated_stacks() {
                                     headers: Map::new(),
                                     content: json!({"branch": 1}),
                                 },
+                                LlmExecutionContext::default(),
                                 downstream,
                             )
                         )
@@ -6134,7 +6244,7 @@ fn native_codec_operations_report_json_and_codec_failures() {
 }
 
 #[test]
-fn native_v4_completion_scoped_codecs_enforce_direction_and_expiration() {
+fn native_completion_scoped_codecs_enforce_direction_and_expiration() {
     let (sender, _receiver) = tokio::sync::oneshot::channel();
     let completion = Arc::new(NativeAsyncCompletion {
         sender: Mutex::new(Some(sender)),
@@ -6142,9 +6252,10 @@ fn native_v4_completion_scoped_codecs_enforce_direction_and_expiration() {
         next_invoked: AtomicBool::new(false),
         next_abort: Mutex::new(None),
         continuation_aborts: Mutex::new(HashMap::new()),
-        codec: Some(NativeAsyncCodecCapability::Request(
-            Arc::new(OpenAIChatCodec) as Arc<dyn LlmCodec>,
+        request_codec: Some(NativeHostLlmRequestCodec(
+            Arc::new(OpenAIChatCodec) as Arc<dyn LlmCodec>
         )),
+        response_codec: None,
         before_settlement_lock: None,
         _callback_user_data: None,
     });
@@ -6225,6 +6336,81 @@ fn native_v4_completion_scoped_codecs_enforce_direction_and_expiration() {
         native_string_free(request_json);
         native_string_free(annotated_json);
         native_async_completion_release(completion_ref);
+    }
+}
+
+#[test]
+fn native_stream_scoped_codec_expires_after_stream_settlement() {
+    let (sender, _receiver) = tokio::sync::mpsc::channel(1);
+    let stream = Arc::new(NativeAsyncStream {
+        sender: Mutex::new(Some(sender)),
+        cancelled: AtomicBool::new(false),
+        settled: AtomicBool::new(false),
+        backpressured: AtomicBool::new(false),
+        downstream_aborts: Mutex::new(HashMap::new()),
+        settlement: Mutex::new(()),
+        request_codec: Some(NativeHostLlmRequestCodec(
+            Arc::new(OpenAIChatCodec) as Arc<dyn LlmCodec>
+        )),
+        before_settlement_lock: None,
+        _callback_user_data: None,
+    });
+    let stream_ref = Arc::into_raw(Arc::clone(&stream)) as *const NemoRelayNativeAsyncStream;
+    assert_eq!(
+        unsafe { native_async_stream_retain(stream_ref) },
+        NemoRelayStatus::Ok
+    );
+    let request = LlmRequest {
+        headers: Map::new(),
+        content: json!({
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "secret"}]
+        }),
+    };
+    let request_json = native_string(&serde_json::to_string(&request).unwrap());
+    let mut output = ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            native_async_stream_llm_request_codec_decode(stream_ref, request_json, &mut output)
+        },
+        NemoRelayStatus::Ok
+    );
+    let annotated: AnnotatedLlmRequest =
+        serde_json::from_str(&read_native_string(output).unwrap()).unwrap();
+    unsafe { native_string_free(output) };
+    let annotated_json = native_string(&serde_json::to_string(&annotated).unwrap());
+    assert_eq!(
+        unsafe {
+            native_async_stream_llm_request_codec_encode(
+                stream_ref,
+                annotated_json,
+                request_json,
+                &mut output,
+            )
+        },
+        NemoRelayStatus::Ok
+    );
+    unsafe { native_string_free(output) };
+
+    assert_eq!(
+        unsafe { native_async_stream_finish(stream_ref) },
+        NemoRelayStatus::Ok
+    );
+    let sentinel = native_string("expired");
+    output = sentinel;
+    assert_eq!(
+        unsafe {
+            native_async_stream_llm_request_codec_decode(stream_ref, request_json, &mut output)
+        },
+        NemoRelayStatus::InvalidArg
+    );
+    assert!(output.is_null());
+    unsafe {
+        native_string_free(sentinel);
+        native_string_free(request_json);
+        native_string_free(annotated_json);
+        native_async_stream_release(stream_ref);
+        native_async_stream_release(stream_ref);
     }
 }
 
@@ -6555,6 +6741,7 @@ unsafe extern "C" fn llm_execution_error(
     _user_data: *mut c_void,
     _name: *const NemoRelayNativeString,
     _request_json: *const NemoRelayNativeString,
+    _context: NemoRelayNativeLlmExecutionContext,
     _next_fn: NemoRelayNativeLlmNextFn,
     _next_ctx: *mut c_void,
     out_json: *mut *mut NemoRelayNativeString,
@@ -6569,6 +6756,7 @@ unsafe extern "C" fn llm_stream_execution_error(
     _user_data: *mut c_void,
     _name: *const NemoRelayNativeString,
     _request_json: *const NemoRelayNativeString,
+    _context: NemoRelayNativeLlmExecutionContext,
     _next_fn: NemoRelayNativeLlmStreamNextFn,
     _next_ctx: *mut c_void,
     out_stream: *mut NemoRelayNativeLlmStreamV1,
@@ -6848,11 +7036,16 @@ async fn native_callback_wrappers_release_error_outputs_and_preserve_reasons() {
         None,
     );
     assert!(
-        llm_execution("model", request.clone(), llm_next(Ok(Json::Null)))
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("LLM execution failed")
+        llm_execution(
+            "model",
+            request.clone(),
+            LlmExecutionContext::default(),
+            llm_next(Ok(Json::Null)),
+        )
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("LLM execution failed")
     );
 
     let stream_next: LlmStreamExecutionNextFn =
@@ -6860,12 +7053,17 @@ async fn native_callback_wrappers_release_error_outputs_and_preserve_reasons() {
     let llm_stream_execution =
         wrap_llm_stream_execution_fn(instance, llm_stream_execution_error, ptr::null_mut(), None);
     assert!(
-        llm_stream_execution("model", request, stream_next)
-            .await
-            .err()
-            .expect("native stream callback should fail")
-            .to_string()
-            .contains("LLM stream execution failed")
+        llm_stream_execution(
+            "model",
+            request,
+            LlmExecutionContext::default(),
+            stream_next,
+        )
+        .await
+        .err()
+        .expect("native stream callback should fail")
+        .to_string()
+        .contains("LLM stream execution failed")
     );
 }
 
@@ -7029,6 +7227,94 @@ fn native_llm_sanitize_context_preserves_all_codec_identity_states() {
             unsafe { native_string_free(context_id) };
         }
     }
+}
+
+#[test]
+fn native_execution_context_is_directional_and_streaming_omits_response_codec() {
+    let request_codec: Arc<dyn LlmCodec> = Arc::new(OpenAIChatCodec);
+    let response_codec: Arc<dyn LlmResponseCodec> = Arc::new(OpenAIChatCodec);
+    let unary = LlmExecutionContext::new(
+        LlmSanitizeRequestContext::for_request_codec(Some(request_codec.clone())),
+        Some(LlmSanitizeResponseContext::for_response_codec(Some(
+            response_codec.clone(),
+        ))),
+    );
+    let native_request_codec = NativeHostLlmRequestCodec(request_codec.clone());
+    let native_response_codec = NativeHostLlmResponseCodec(response_codec);
+    let bridge = NativeLlmExecutionContextBridge::new(
+        &unary,
+        Some(&native_request_codec),
+        Some(&native_response_codec),
+    )
+    .unwrap();
+    bridge.with_native_context(|context| {
+        assert_eq!(
+            context.request_codec.codec_kind,
+            NemoRelayNativeLlmCodecKind::BuiltIn
+        );
+        assert_eq!(
+            read_native_string(context.request_codec.codec_id).unwrap(),
+            "openai_chat"
+        );
+        assert!(!context.request_codec.codec.is_null());
+        assert!(!context.response_codec.is_null());
+        let response = unsafe { &*context.response_codec };
+        assert_eq!(response.codec_kind, NemoRelayNativeLlmCodecKind::BuiltIn);
+        assert_eq!(
+            read_native_string(response.codec_id).unwrap(),
+            "openai_chat"
+        );
+        assert!(!response.codec.is_null());
+    });
+
+    let streaming = LlmExecutionContext::new(
+        LlmSanitizeRequestContext::for_request_codec(Some(request_codec)),
+        None,
+    );
+    let bridge =
+        NativeLlmExecutionContextBridge::new(&streaming, Some(&native_request_codec), None)
+            .unwrap();
+    bridge.with_native_context(|context| {
+        assert!(!context.request_codec.codec.is_null());
+        assert!(context.response_codec.is_null());
+    });
+
+    let absent = LlmExecutionContext::new(
+        LlmSanitizeRequestContext::for_request_codec(None),
+        Some(LlmSanitizeResponseContext::for_response_codec(None)),
+    );
+    let bridge = NativeLlmExecutionContextBridge::new(&absent, None, None).unwrap();
+    bridge.with_native_context(|context| {
+        assert_eq!(
+            context.request_codec.codec_kind,
+            NemoRelayNativeLlmCodecKind::None
+        );
+        assert!(context.request_codec.codec_id.is_null());
+        assert!(context.request_codec.codec.is_null());
+        assert!(!context.response_codec.is_null());
+        let response = unsafe { &*context.response_codec };
+        assert_eq!(response.codec_kind, NemoRelayNativeLlmCodecKind::None);
+        assert!(response.codec_id.is_null());
+        assert!(response.codec.is_null());
+    });
+
+    let allocation_failure = LlmExecutionContext::new(
+        LlmSanitizeRequestContext::with_identity(LlmCodecIdentity::Runtime("request.v1".into())),
+        Some(LlmSanitizeResponseContext::with_identity(
+            LlmCodecIdentity::Runtime("response.v1".into()),
+        )),
+    );
+    let live_before = native_string_live_allocations();
+    fail_native_string_allocation_after(1);
+    let error = NativeLlmExecutionContextBridge::new(&allocation_failure, None, None)
+        .err()
+        .expect("response codec ID allocation should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("failed to allocate native LLM codec ID")
+    );
+    assert_eq!(native_string_live_allocations(), live_before);
 }
 
 #[test]
@@ -7567,7 +7853,7 @@ async fn native_stream_adapter_covers_chunks_end_errors_and_cancellation() {
         NativeStreamItem::Json(json!({"chunk": 1})),
         NativeStreamItem::End,
     ]);
-    let mut stream = native_stream_to_relay_stream(raw, None, None).unwrap();
+    let mut stream = native_stream_to_relay_stream(raw, None, None, None).unwrap();
     assert_eq!(stream.next().await.unwrap().unwrap(), json!({"chunk": 1}));
     assert!(stream.next().await.is_none());
     assert_eq!(cancel_count.load(Ordering::SeqCst), 0);
@@ -7576,7 +7862,7 @@ async fn native_stream_adapter_covers_chunks_end_errors_and_cancellation() {
     let (raw, cancel_count, drop_count) = test_native_stream([NativeStreamItem::Json(json!({
         "chunk": 2
     }))]);
-    let stream = native_stream_to_relay_stream(raw, None, None).unwrap();
+    let stream = native_stream_to_relay_stream(raw, None, None, None).unwrap();
     drop(stream);
     assert_eq!(cancel_count.load(Ordering::SeqCst), 1);
     assert_eq!(drop_count.load(Ordering::SeqCst), 1);
@@ -7588,7 +7874,7 @@ async fn native_stream_adapter_covers_chunks_end_errors_and_cancellation() {
         NativeStreamItem::ErrorWithJson(NemoRelayStatus::InvalidArg),
     ] {
         let (raw, _, drop_count) = test_native_stream([item]);
-        let mut stream = native_stream_to_relay_stream(raw, None, None).unwrap();
+        let mut stream = native_stream_to_relay_stream(raw, None, None, None).unwrap();
         assert!(stream.next().await.unwrap().is_err());
         assert!(stream.next().await.is_none());
         assert_eq!(drop_count.load(Ordering::SeqCst), 1);
@@ -7596,16 +7882,16 @@ async fn native_stream_adapter_covers_chunks_end_errors_and_cancellation() {
 
     let (mut raw, _, drop_count) = test_native_stream([]);
     raw.struct_size = 0;
-    assert!(NativeRelayLlmStream::from_raw(raw, None, None).is_err());
+    assert!(NativeRelayLlmStream::from_raw(raw, None, None, None).is_err());
     assert_eq!(drop_count.load(Ordering::SeqCst), 1);
 
     let (mut raw, _, drop_count) = test_native_stream([]);
     raw.next = None;
-    assert!(NativeRelayLlmStream::from_raw(raw, None, None).is_err());
+    assert!(NativeRelayLlmStream::from_raw(raw, None, None, None).is_err());
     assert_eq!(drop_count.load(Ordering::SeqCst), 1);
 
     let (raw, _, drop_count) = test_native_stream([NativeStreamItem::EndWithJson]);
-    let mut stream = native_stream_to_relay_stream(raw, None, None).unwrap();
+    let mut stream = native_stream_to_relay_stream(raw, None, None, None).unwrap();
     assert!(stream.next().await.is_none());
     assert_eq!(drop_count.load(Ordering::SeqCst), 1);
 
@@ -7614,6 +7900,7 @@ async fn native_stream_adapter_covers_chunks_end_errors_and_cancellation() {
         finished: false,
         _next_ctx: None,
         _callback_user_data: None,
+        _request_codec: None,
     };
     assert!(invalid.next().await.unwrap().is_err());
     assert!(invalid.next().await.is_none());
