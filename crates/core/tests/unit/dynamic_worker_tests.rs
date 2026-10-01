@@ -3472,6 +3472,7 @@ async fn overlapping_worker_invocations_isolate_scope_stack_mutations() {
                     data: None,
                     metadata: None,
                     input: None,
+                    timestamp_unix_micros: None,
                 }))
                 .await
                 .expect("worker scope should push")
@@ -3573,6 +3574,7 @@ async fn worker_runtime_scope_calls_restore_managed_parent_and_trace_context() {
             data: None,
             metadata: None,
             input: None,
+            timestamp_unix_micros: None,
         }))
         .await
         .expect("managed-parent scope should push")
