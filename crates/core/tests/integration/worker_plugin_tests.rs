@@ -702,6 +702,17 @@ async fn rust_worker_registers_and_invokes_all_current_surfaces() {
     );
     assert_eq!(pending_mark.metadata().unwrap()["fixture"], true);
     assert_eq!(pending_mark.metadata().unwrap()["worker_plugin_mark"], true);
+    let runtime_mark = find_event(
+        &captured_events,
+        "fixture.worker.llm_execution.runtime.mark",
+        None,
+    );
+    assert_eq!(runtime_mark.parent_uuid(), Some(llm_start.uuid()));
+    assert!(runtime_mark.propagation_traceparent().is_some());
+    assert_eq!(
+        runtime_mark.metadata().unwrap()["name"],
+        "worker-fixture-llm-execute"
+    );
     let llm_end = find_event(
         &captured_events,
         "worker-fixture-llm-execute",
@@ -746,7 +757,27 @@ async fn rust_worker_registers_and_invokes_all_current_surfaces() {
         stream_value["request"]["worker_plugin_llm_stream_execution_request"],
         true
     );
+    flush_subscribers().expect("worker fixture streaming events should flush");
+    let captured_events = events.lock().unwrap().clone();
+    let stream_start = find_event(
+        &captured_events,
+        "worker-fixture-llm-stream",
+        Some(ScopeCategory::Start),
+    );
+    let stream_runtime_mark = find_event(
+        &captured_events,
+        "fixture.worker.llm_stream_execution.runtime.mark",
+        None,
+    );
+    assert_eq!(stream_runtime_mark.parent_uuid(), Some(stream_start.uuid()));
+    assert!(stream_runtime_mark.propagation_traceparent().is_some());
+    assert_eq!(
+        stream_runtime_mark.metadata().unwrap()["name"],
+        "worker-fixture-llm-stream"
+    );
 
+    deregister_subscriber("worker_plugin_fixture_events")
+        .expect("worker fixture subscriber should deregister");
     loaded.clear();
 }
 
@@ -1676,7 +1707,20 @@ async fn python_worker_host_runtime_mark_and_mutated_request_round_trip() {
 
     flush_subscribers().expect("Python callback mark should flush");
     let captured_events = events.lock().unwrap();
-    find_event(&captured_events, "example.python_worker.tool_request", None);
+    let tool_start = find_event(
+        &captured_events,
+        "python-worker-tool",
+        Some(ScopeCategory::Start),
+    );
+    let runtime_scope = find_event(
+        &captured_events,
+        "example.python_worker.request",
+        Some(ScopeCategory::Start),
+    );
+    assert_eq!(runtime_scope.parent_uuid(), Some(tool_start.uuid()));
+    assert!(runtime_scope.propagation_traceparent().is_some());
+    let runtime_mark = find_event(&captured_events, "example.python_worker.tool_request", None);
+    assert_eq!(runtime_mark.parent_uuid(), Some(runtime_scope.uuid()));
     let tool_mark = find_event(
         &captured_events,
         "example.python_worker.tool_execution",

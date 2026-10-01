@@ -14,10 +14,18 @@ use crate::api::runtime::scope_stack::{
     current_scope_stack, rebind_active_event_to_stack, scope_stack_active, snapshot_scope_stack,
     with_anchored_active_event,
 };
+#[cfg(feature = "worker-grpc")]
+use crate::api::runtime::scope_stack::{
+    install_thread_continuation_context, restore_thread_scope_stack, with_scope_stack,
+};
 use crate::api::runtime::subscriber_dispatcher::{
     PublicationBuffer, PublicationContext, capture_nested_publication_buffer,
     capture_publication_context, with_task_nested_publication_buffer,
     with_task_publication_context,
+};
+#[cfg(feature = "worker-grpc")]
+use crate::api::runtime::subscriber_dispatcher::{
+    with_nested_publication_buffer, with_publication_context,
 };
 use crate::error::{FlowError, Result};
 
@@ -77,6 +85,36 @@ impl MiddlewareContinuationContext {
             publication_context: self.publication_context.clone(),
             publication_buffer: self.publication_buffer.clone(),
             optimization_recorder: self.optimization_recorder.clone(),
+        })
+    }
+
+    #[cfg(feature = "worker-grpc")]
+    pub(crate) fn scope_stack(&self) -> ScopeStackHandle {
+        self.scope_stack.clone()
+    }
+
+    #[cfg(feature = "worker-grpc")]
+    pub(crate) fn run_sync<T>(&self, callback: impl FnOnce() -> T) -> T {
+        struct RestoreThreadContext(Option<crate::api::runtime::ThreadScopeStackBinding>);
+
+        impl Drop for RestoreThreadContext {
+            fn drop(&mut self) {
+                if let Some(previous) = self.0.take() {
+                    restore_thread_scope_stack(previous);
+                }
+            }
+        }
+
+        let previous = install_thread_continuation_context(
+            &self.scope_stack,
+            self.active_event,
+            self.active_event_trace_context.clone(),
+        );
+        let _restore = RestoreThreadContext(Some(previous));
+        with_publication_context(self.publication_context.clone(), || {
+            with_nested_publication_buffer(self.publication_buffer.clone(), || {
+                with_scope_stack(self.scope_stack.clone(), callback)
+            })
         })
     }
 

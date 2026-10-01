@@ -175,7 +175,7 @@ impl WorkerPlugin for FixtureWorkerPlugin {
         );
         register_fixture_tool_hooks(
             ctx,
-            runtime,
+            runtime.clone(),
             fixture_flag(config, "block_tool"),
             fixture_flag(config, "tool_request_error"),
             fixture_flag(config, "exit_in_tool_request"),
@@ -183,6 +183,7 @@ impl WorkerPlugin for FixtureWorkerPlugin {
         );
         register_fixture_llm_hooks(
             ctx,
+            runtime,
             fixture_flag(config, "llm_request_error"),
             fixture_flag(config, "llm_stream_open_error"),
         );
@@ -310,6 +311,7 @@ fn register_fixture_tool_hooks(
 
 fn register_fixture_llm_hooks(
     ctx: &mut PluginContext,
+    runtime: nemo_relay_worker::PluginRuntime,
     llm_request_error: bool,
     llm_stream_open_error: bool,
 ) {
@@ -372,10 +374,18 @@ fn register_fixture_llm_hooks(
             )
         },
     );
-    ctx.register_llm_execution_intercept(
-        "fixture_llm_execution",
-        0,
-        |_name, request, next: LlmNext| async move {
+    let unary_runtime = runtime.clone();
+    ctx.register_llm_execution_intercept("fixture_llm_execution", 0, move |name, request, next: LlmNext| {
+        let runtime = unary_runtime.clone();
+        let name = name.to_owned();
+        async move {
+            runtime
+                .emit_mark(
+                    "fixture.worker.llm_execution.runtime.mark",
+                    None,
+                    Some(json!({ "name": name })),
+                )
+                .await?;
             let response = next
                 .call(mark_llm_request(
                     request,
@@ -383,17 +393,28 @@ fn register_fixture_llm_hooks(
                 ))
                 .await?;
             Ok(mark_json(response, "worker_plugin_llm_execution"))
-        },
-    );
+        }
+    });
+    let stream_runtime = runtime;
     ctx.register_llm_stream_execution_intercept(
         "fixture_llm_stream_execution",
         0,
-        move |_name, request, next: LlmStreamNext| async move {
+        move |name, request, next: LlmStreamNext| {
+            let runtime = stream_runtime.clone();
+            let name = name.to_owned();
+            async move {
             if llm_stream_open_error {
                 return Err(WorkerSdkError::Callback(
                     "fixture LLM stream open error requested".into(),
                 ));
             }
+            runtime
+                .emit_mark(
+                    "fixture.worker.llm_stream_execution.runtime.mark",
+                    None,
+                    Some(json!({ "name": name })),
+                )
+                .await?;
             let stream = next
                 .call(mark_llm_request(
                     request,
@@ -404,6 +425,7 @@ fn register_fixture_llm_hooks(
                 chunk.map(|value| mark_json(value, "worker_plugin_llm_stream_execution"))
             }));
             Ok(mapped)
+            }
         },
     );
 }

@@ -1281,6 +1281,22 @@ pub fn restore_thread_scope_stack(binding: ThreadScopeStackBinding) {
         .with(|context| *context.borrow_mut() = binding.active_event_trace_context);
 }
 
+#[cfg(feature = "worker-grpc")]
+pub(crate) fn install_thread_continuation_context(
+    scope_stack: &ScopeStackHandle,
+    active_event: Option<AnchoredActiveEvent>,
+    active_event_trace_context: Option<W3cTraceContext>,
+) -> ThreadScopeStackBinding {
+    let previous = capture_thread_scope_stack();
+    sync_thread_scope_stack(scope_stack.clone());
+    THREAD_ACTIVE_EVENT.with(|event| {
+        event.set(active_event.map(|event| rebind_active_event_to_stack(event, scope_stack)))
+    });
+    THREAD_ACTIVE_EVENT_TRACE_CONTEXT
+        .with(|context| *context.borrow_mut() = active_event_trace_context);
+    previous
+}
+
 /// Synchronize the thread-local scope stack without marking it explicit.
 ///
 /// This updates the thread-local slot used by native runtime code while

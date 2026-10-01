@@ -1697,7 +1697,7 @@ impl WorkerPluginCallback {
                     registration_name: registration_name.into(),
                 },
             )),
-        );
+        )?;
         guardrail_from_invoke_response(self.invoke_blocking(request)?)
     }
 
@@ -1707,7 +1707,7 @@ impl WorkerPluginCallback {
             RegistrationSurface::Subscriber,
             None,
             Some(invoke_request_payload_event(event)),
-        );
+        )?;
         let response = self.invoke_blocking(request)?;
         match response.result {
             Some(invoke_response_result::Result::Empty(_)) | None => Ok(()),
@@ -1728,7 +1728,7 @@ impl WorkerPluginCallback {
             RegistrationSurface::EventMetadataInjector,
             None,
             Some(invoke_request_payload_event(event)),
-        );
+        )?;
         let value = json_from_invoke_response(self.invoke_async(request).await?)?;
         let additions = serde_json::from_value::<BTreeMap<String, Json>>(value).map_err(|err| {
             FlowError::Internal(format!(
@@ -1749,7 +1749,7 @@ impl WorkerPluginCallback {
             surface,
             None,
             Some(invoke_request_payload_event(event)),
-        );
+        )?;
         let value = json_from_invoke_response(self.invoke_async(request).await?)?;
         serde_json::from_value(value).map_err(|err| {
             FlowError::Internal(format!(
@@ -1771,7 +1771,7 @@ impl WorkerPluginCallback {
             surface,
             continuation_id,
             Some(invoke_request_payload_tool(tool_name, value, None)),
-        );
+        )?;
         json_from_invoke_response(self.invoke_async(request).await?)
     }
 
@@ -1786,7 +1786,7 @@ impl WorkerPluginCallback {
             RegistrationSurface::ToolConditionalExecutionGuardrail,
             None,
             Some(invoke_request_payload_tool(tool_name, value, None)),
-        );
+        )?;
         guardrail_from_invoke_response(self.invoke_async(request).await?)
     }
 
@@ -1806,7 +1806,7 @@ impl WorkerPluginCallback {
             RegistrationSurface::ToolExecutionIntercept,
             Some(continuation_id),
             Some(invoke_request_payload_tool(tool_name, value, tool_call_id)),
-        );
+        )?;
         let response = self.invoke_async(request).await?;
         match response.result {
             Some(invoke_response_result::Result::ToolExecution(result)) => {
@@ -1848,7 +1848,7 @@ impl WorkerPluginCallback {
                     },
                 ),
             )),
-        );
+        )?;
         let capability_id = context.resolve_codec().map(|codec| {
             let capability_id = self
                 .host_state
@@ -1898,7 +1898,7 @@ impl WorkerPluginCallback {
                     },
                 ),
             )),
-        );
+        )?;
         let capability_id = context.resolve_codec().map(|codec| {
             let capability_id = self
                 .host_state
@@ -1931,7 +1931,7 @@ impl WorkerPluginCallback {
             RegistrationSurface::LlmConditionalExecutionGuardrail,
             None,
             Some(invoke_request_payload_llm("", Some(request), None, None)),
-        );
+        )?;
         guardrail_from_invoke_response(self.invoke_async(invoke).await?)
     }
 
@@ -1952,7 +1952,7 @@ impl WorkerPluginCallback {
                 annotated,
                 None,
             )),
-        );
+        )?;
         let response = self.invoke_async(invoke).await?;
         match response.result {
             Some(invoke_response_result::Result::LlmRequest(result)) => {
@@ -1996,7 +1996,7 @@ impl WorkerPluginCallback {
                 None,
                 None,
             )),
-        );
+        )?;
         json_from_invoke_response(self.invoke_async(invoke).await?)
     }
 
@@ -2020,7 +2020,7 @@ impl WorkerPluginCallback {
                 None,
                 None,
             )),
-        );
+        )?;
         let mut client = self.client.clone();
         let mut guard = WorkerInvocationGuard::new(self, &invoke);
         let (tx, rx) = mpsc::channel(16);
@@ -2094,12 +2094,20 @@ impl WorkerPluginCallback {
         surface: RegistrationSurface,
         continuation_id: Option<String>,
         payload: Option<invoke_request_payload::Payload>,
-    ) -> InvokeRequest {
-        let scope_stack_id = self.host_state.insert_invocation_scope_stack(
+    ) -> FlowResult<InvokeRequest> {
+        let scope_stack_id = match self.host_state.insert_invocation_scope_stack(
             current_scope_stack(),
             capture_nested_publication_buffer(),
-        );
-        InvokeRequest {
+        ) {
+            Ok(scope_stack_id) => scope_stack_id,
+            Err(error) => {
+                if let Some(continuation_id) = continuation_id.as_deref() {
+                    self.host_state.remove_continuation(continuation_id);
+                }
+                return Err(error);
+            }
+        };
+        Ok(InvokeRequest {
             activation_id: self.activation_id.clone(),
             auth_token: self.host_state.auth_token.clone(),
             invocation_id: Uuid::now_v7().to_string(),
@@ -2111,7 +2119,7 @@ impl WorkerPluginCallback {
                 parent_scope_id: String::new(),
             }),
             payload,
-        }
+        })
     }
 
     fn invoke_blocking(&self, request: InvokeRequest) -> FlowResult<InvokeResponse> {
@@ -2361,6 +2369,7 @@ enum WorkerCodecDirection {
 struct StoredScopeStack {
     handle: crate::api::runtime::ScopeStackHandle,
     publication_buffer: Option<PublicationBuffer>,
+    continuation_context: Option<MiddlewareContinuationContext>,
     invocation_base_depth: Option<usize>,
 }
 
@@ -2610,33 +2619,43 @@ impl WorkerHostRuntimeState {
 
     fn insert_invocation_scope_stack(
         &self,
-        stack: crate::api::runtime::ScopeStackHandle,
+        source_stack: crate::api::runtime::ScopeStackHandle,
         publication_buffer: Option<PublicationBuffer>,
-    ) -> String {
-        let id = format!("invoke-{}", Uuid::now_v7());
-        let Ok(mut stacks) = self.scope_stacks.lock() else {
-            return id;
-        };
+    ) -> FlowResult<String> {
+        let mut stacks = self
+            .scope_stacks
+            .lock()
+            .map_err(|error| FlowError::Internal(format!("scope stack lock poisoned: {error}")))?;
         loop {
-            let Ok(cleanups) = self.scope_stack_cleanups.lock() else {
-                return id;
-            };
-            if !cleanups.iter().any(|handle| Arc::ptr_eq(handle, &stack)) {
+            let cleanups = self.scope_stack_cleanups.lock().map_err(|error| {
+                FlowError::Internal(format!("scope cleanup lock poisoned: {error}"))
+            })?;
+            if !cleanups
+                .iter()
+                .any(|handle| Arc::ptr_eq(handle, &source_stack))
+            {
                 break;
             }
             drop(stacks);
-            let Ok(guard) = self.scope_stack_cleanup_complete.wait(cleanups) else {
-                return id;
-            };
+            let guard = self
+                .scope_stack_cleanup_complete
+                .wait(cleanups)
+                .map_err(|error| {
+                    FlowError::Internal(format!("scope cleanup lock poisoned: {error}"))
+                })?;
             drop(guard);
-            let Ok(guard) = self.scope_stacks.lock() else {
-                return id;
-            };
-            stacks = guard;
+            stacks = self.scope_stacks.lock().map_err(|error| {
+                FlowError::Internal(format!("scope stack lock poisoned: {error}"))
+            })?;
         }
-        let Ok(stack_guard) = stack.read() else {
-            return id;
-        };
+
+        let continuation_context =
+            MiddlewareContinuationContext::capture().isolated_with_scope_stack(&source_stack)?;
+        let stack = continuation_context.scope_stack();
+        let id = format!("invoke-{}", Uuid::now_v7());
+        let stack_guard = stack
+            .read()
+            .map_err(|error| FlowError::Internal(format!("scope stack lock poisoned: {error}")))?;
         let invocation_base_depth = stack_guard.scopes().len();
         drop(stack_guard);
         stacks.insert(
@@ -2644,20 +2663,26 @@ impl WorkerHostRuntimeState {
             StoredScopeStack {
                 handle: stack,
                 publication_buffer,
+                continuation_context: Some(continuation_context),
                 invocation_base_depth: Some(invocation_base_depth),
             },
         );
-        id
+        Ok(id)
     }
 
     fn cleanup_invocation_scope_stack(&self, id: &str) {
         let unwind = self.take_invocation_scope_cleanup(id);
-        if let Some((handle, base_depth)) = unwind {
+        if let Some((handle, base_depth, continuation_context, publication_buffer)) = unwind {
             let _cleanup = ScopeStackCleanupGuard {
                 state: self,
                 handle: handle.clone(),
             };
-            Self::unwind_scope_stack(&handle, base_depth);
+            Self::unwind_scope_stack(
+                &handle,
+                base_depth,
+                continuation_context,
+                publication_buffer,
+            );
         }
         if let Ok(mut handles) = self.scope_handles.lock() {
             handles.retain(|_, handle| handle.scope_stack_id != id);
@@ -2667,7 +2692,12 @@ impl WorkerHostRuntimeState {
     fn take_invocation_scope_cleanup(
         &self,
         id: &str,
-    ) -> Option<(crate::api::runtime::ScopeStackHandle, usize)> {
+    ) -> Option<(
+        crate::api::runtime::ScopeStackHandle,
+        usize,
+        Option<MiddlewareContinuationContext>,
+        Option<PublicationBuffer>,
+    )> {
         let Ok(mut stacks) = self.scope_stacks.lock() else {
             return None;
         };
@@ -2695,11 +2725,21 @@ impl WorkerHostRuntimeState {
             return None;
         };
         cleanups.push(stored.handle.clone());
-        Some((stored.handle, base_depth))
+        Some((
+            stored.handle,
+            base_depth,
+            stored.continuation_context,
+            stored.publication_buffer,
+        ))
     }
 
-    fn unwind_scope_stack(stack: &crate::api::runtime::ScopeStackHandle, base_depth: usize) {
-        loop {
+    fn unwind_scope_stack(
+        stack: &crate::api::runtime::ScopeStackHandle,
+        base_depth: usize,
+        continuation_context: Option<MiddlewareContinuationContext>,
+        publication_buffer: Option<PublicationBuffer>,
+    ) {
+        let unwind = || loop {
             let top_uuid = {
                 let Ok(stack) = stack.read() else {
                     return;
@@ -2722,6 +2762,12 @@ impl WorkerHostRuntimeState {
             if stack.remove(&top_uuid).is_err() {
                 return;
             }
+        };
+        match continuation_context {
+            Some(context) => context.run_sync(unwind),
+            None => with_nested_publication_buffer(publication_buffer, || {
+                with_scope_stack(stack.clone(), unwind)
+            }),
         }
     }
 
@@ -2775,6 +2821,7 @@ impl WorkerHostRuntimeState {
             .map(|stored| StoredInvocationContext {
                 scope_stack: stored.handle.clone(),
                 publication_buffer: stored.publication_buffer.clone(),
+                continuation_context: stored.continuation_context.clone(),
             })
             .map(Some)
             .ok_or_else(|| Status::not_found("scope stack not found"))
@@ -2785,6 +2832,18 @@ impl WorkerHostRuntimeState {
 struct StoredInvocationContext {
     scope_stack: crate::api::runtime::ScopeStackHandle,
     publication_buffer: Option<PublicationBuffer>,
+    continuation_context: Option<MiddlewareContinuationContext>,
+}
+
+impl StoredInvocationContext {
+    fn run<T>(&self, callback: impl FnOnce() -> T) -> T {
+        match &self.continuation_context {
+            Some(context) => context.run_sync(callback),
+            None => with_nested_publication_buffer(self.publication_buffer.clone(), || {
+                with_scope_stack(self.scope_stack.clone(), callback)
+            }),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -3210,9 +3269,7 @@ impl RelayHostRuntime for WorkerHostRuntimeService {
         let result = if handle.scope_stack_id.is_empty() {
             pop()
         } else if let Some(context) = self.state.invocation_context(&handle.scope_stack_id)? {
-            with_nested_publication_buffer(context.publication_buffer, || {
-                with_scope_stack(context.scope_stack, pop)
-            })
+            context.run(pop)
         } else {
             pop()
         };
@@ -3236,6 +3293,7 @@ impl RelayHostRuntime for WorkerHostRuntimeService {
                 StoredScopeStack {
                     handle: crate::api::runtime::create_scope_stack(),
                     publication_buffer: None,
+                    continuation_context: None,
                     invocation_base_depth: None,
                 },
             );
@@ -3555,9 +3613,7 @@ impl WorkerHostRuntimeService {
         else {
             return f();
         };
-        with_nested_publication_buffer(context.publication_buffer, || {
-            with_scope_stack(context.scope_stack, f)
-        })
+        context.run(f)
     }
 }
 
