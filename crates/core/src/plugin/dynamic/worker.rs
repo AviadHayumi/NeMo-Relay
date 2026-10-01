@@ -14,6 +14,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use futures_util::FutureExt;
 use nemo_relay_worker_proto::v1::plugin_worker_client::PluginWorkerClient;
 use nemo_relay_worker_proto::v1::relay_host_runtime_server::{
@@ -3352,6 +3353,7 @@ impl RelayHostRuntime for WorkerHostRuntimeService {
                     .data_opt(optional_envelope_to_json(request.data)?)
                     .metadata_opt(optional_envelope_to_json(request.metadata)?)
                     .input_opt(optional_envelope_to_json(request.input)?)
+                    .timestamp_opt(optional_worker_timestamp(request.timestamp_unix_micros)?)
                     .build(),
             )
         });
@@ -3393,6 +3395,10 @@ impl RelayHostRuntime for WorkerHostRuntimeService {
         let request = request.into_inner();
         self.state
             .authorize(&request.activation_id, &request.auth_token)?;
+        let timestamp = match optional_worker_timestamp(request.timestamp_unix_micros) {
+            Ok(timestamp) => timestamp,
+            Err(err) => return Ok(Response::new(host_ack(Err(err)))),
+        };
         let handle = self
             .state
             .scope_handles
@@ -3408,6 +3414,7 @@ impl RelayHostRuntime for WorkerHostRuntimeService {
                     .handle_uuid(&handle.handle.uuid)
                     .output_opt(output)
                     .metadata_opt(metadata)
+                    .timestamp_opt(timestamp)
                     .build(),
             )
         };
@@ -3927,6 +3934,18 @@ fn optional_envelope_to_json(value: Option<JsonEnvelope>) -> FlowResult<Option<J
         .map(|value| {
             decode_json_envelope::<Json>(&value)
                 .map_err(|err| FlowError::Internal(format!("invalid JSON envelope: {err}")))
+        })
+        .transpose()
+}
+
+fn optional_worker_timestamp(value: Option<i64>) -> FlowResult<Option<DateTime<Utc>>> {
+    value
+        .map(|timestamp| {
+            DateTime::<Utc>::from_timestamp_micros(timestamp).ok_or_else(|| {
+                FlowError::InvalidArgument(
+                    "timestamp unix microseconds are outside supported range".into(),
+                )
+            })
         })
         .transpose()
 }
