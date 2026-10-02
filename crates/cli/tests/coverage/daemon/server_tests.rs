@@ -463,14 +463,7 @@ async fn open_enrollment_binds_new_tokens_without_allowlist_and_prevents_route_t
                 )
                 .await
                 .unwrap();
-            assert_eq!(
-                response.status(),
-                if pass_through {
-                    StatusCode::OK
-                } else {
-                    StatusCode::SERVICE_UNAVAILABLE
-                }
-            );
+            assert_eq!(response.status(), StatusCode::OK);
         }
         assert_eq!(
             enroll_test_mcp(&state, &origin, &other_identity, &first, "takeover")
@@ -1076,7 +1069,8 @@ async fn aborted_public_upload_does_not_demote_a_healthy_worker() {
 #[tokio::test]
 async fn public_ingress_rejects_credentials_methods_websockets_and_unready_routes_early() {
     let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0x23_u8; 32]);
-    let state = test_daemon_state(false, &token, GatewayConfig::default());
+    let mut state = test_daemon_state(false, &token, GatewayConfig::default());
+    Arc::get_mut(&mut state).unwrap().registry = Registry::new(false).with_require_worker(true);
     let app = router(Arc::clone(&state));
 
     let unknown = app
@@ -1478,6 +1472,7 @@ fn advertised_https_is_valid_behind_a_reverse_proxy_without_native_tls() {
         port: 8080,
         advertise_address: Some("https://relay.example.com:443".into()),
         pass_through: false,
+        require_worker: false,
         gateway: crate::server::GatewayOverrides::default(),
         tls_cert: None,
         tls_key: None,
@@ -1504,6 +1499,7 @@ fn daemon_origin_enforces_bind_and_tls_advertisement_contracts() {
         port: 47632,
         advertise_address: None,
         pass_through: false,
+        require_worker: false,
         gateway: crate::server::GatewayOverrides::default(),
         tls_cert: None,
         tls_key: None,
@@ -1592,6 +1588,7 @@ async fn daemon_startup_rejects_an_unpaired_tls_identity_after_initializing_stat
         port: 0,
         advertise_address: None,
         pass_through: false,
+        require_worker: false,
         gateway: crate::server::GatewayOverrides::default(),
         tls_cert: Some(state_directory.path().join("certificate.pem")),
         tls_key: None,
@@ -1617,6 +1614,7 @@ async fn daemon_plain_listener_starts_and_reports_address_conflicts() {
         port: running_port,
         advertise_address: None,
         pass_through: true,
+        require_worker: false,
         gateway: crate::server::GatewayOverrides::default(),
         tls_cert: None,
         tls_key: None,
@@ -1647,6 +1645,7 @@ async fn daemon_plain_listener_starts_and_reports_address_conflicts() {
             port: 0,
             advertise_address: None,
             pass_through: true,
+            require_worker: false,
             gateway: crate::server::GatewayOverrides::default(),
             tls_cert: None,
             tls_key: None,
@@ -2599,29 +2598,23 @@ fn communication_failure_invalidates_route_without_waiting_for_durable_revocatio
     });
     let completed = received.recv_timeout(Duration::from_secs(5));
     let route = state.registry.resolve_target(&digest);
-    let session_removed = state
+    let session_retained = state
         .worker_sessions
         .try_lock()
-        .is_ok_and(|sessions| !sessions.contains_key("failed-worker"));
+        .is_ok_and(|sessions| sessions.contains_key("failed-worker"));
     // Always release contention before asserting, so a regression cannot strand runtime shutdown.
     drop(publication);
     runtime.block_on(task).unwrap();
     completed.expect("failure handling waited for the publication lock");
     assert!(matches!(route, Ok(ResolvedTarget::PassThrough)));
-    assert!(session_removed);
-    runtime.block_on(async {
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while state
-                .active_worker_generations
-                .matches(fingerprint, &generation)
-                .unwrap()
-            {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("generation was not durably revoked");
-    });
+    assert!(session_retained);
+    assert!(
+        state
+            .active_worker_generations
+            .matches(fingerprint, &generation)
+            .unwrap(),
+        "generation remains authorized during reconnect grace"
+    );
 }
 
 #[tokio::test]
@@ -2645,32 +2638,16 @@ async fn release_actions_revoke_activation_transfer_directives_and_ignore_absent
     assert!(!lock(&state.activations).contains_key(&activation_id));
     assert!(!lock(&state.pending_directives).contains_key("launch-owner"));
 
-    let session_id = McpSessionId::new("transfer-owner").unwrap();
-    handle_release_action(
-        Arc::clone(&state),
+    nominate_relaunch(
+        &state,
         fingerprint,
-        ReleaseAction::TransferActivation {
-            session_id: session_id.clone(),
-            directive: BrokerDirective::UsePassThrough,
-        },
-    );
-    assert!(matches!(
-        lock(&state.pending_directives).get(session_id.as_str()),
-        Some(BrokerDirective::UsePassThrough)
-    ));
-
-    handle_release_action(
-        Arc::clone(&state),
-        fingerprint,
-        ReleaseAction::NominateMcp {
-            session_id: McpSessionId::new("missing-owner").unwrap(),
-        },
+        McpSessionId::new("missing-owner").unwrap(),
     );
     handle_release_action(state, fingerprint, ReleaseAction::NoChange);
 }
 
 #[tokio::test]
-async fn nominated_live_mcp_receives_a_fresh_relaunch_activation() {
+async fn retained_mcp_without_a_socket_cannot_receive_a_relaunch() {
     let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0x4e_u8; 32]);
     let credential = RouteCredential::parse(token.clone()).unwrap();
     let state = test_daemon_state(false, &token, GatewayConfig::default());
@@ -2708,10 +2685,8 @@ async fn nominated_live_mcp_receives_a_fresh_relaunch_activation() {
         .registry
         .worker_failed(fingerprint, "failed-worker", u64::MAX)
         .unwrap();
-    let nominee = match action {
-        WorkerFailureAction::NominateMcp { session_id } => session_id,
-        WorkerFailureAction::RouteEmpty => panic!("route unexpectedly empty"),
-    };
+    assert!(matches!(action, WorkerFailureAction::RouteEmpty));
+    let nominee = session_id;
     let secret = SensitiveString::new("mcp-secret").unwrap();
     lock(&state.mcp_sessions).insert(
         nominee.as_str().to_owned(),
@@ -2728,18 +2703,13 @@ async fn nominated_live_mcp_receives_a_fresh_relaunch_activation() {
         },
     );
 
-    handle_release_action(
-        Arc::clone(&state),
-        fingerprint,
-        ReleaseAction::NominateMcp {
-            session_id: nominee.clone(),
-        },
+    nominate_relaunch(&state, fingerprint, nominee.clone());
+    assert!(
+        lock(&state.pending_directives)
+            .get(nominee.as_str())
+            .is_none()
     );
-    assert!(matches!(
-        lock(&state.pending_directives).get(nominee.as_str()),
-        Some(BrokerDirective::LaunchWorker { .. })
-    ));
-    assert_eq!(lock(&state.activations).len(), 1);
+    assert_eq!(lock(&state.activations).len(), 0);
 }
 
 #[tokio::test]
