@@ -603,7 +603,7 @@ fn recovered_worker_becomes_ready_when_an_mcp_reconnects() {
         .expect("recovery authorization");
     assert_eq!(
         registry
-            .publish_recovered_worker(fingerprint, &permit, worker("worker-recovered"))
+            .publish_recovered_worker(fingerprint, &permit, None, worker("worker-recovered"))
             .expect("worker registration"),
         Some("restart".to_owned())
     );
@@ -621,6 +621,43 @@ fn recovered_worker_becomes_ready_when_an_mcp_reconnects() {
     assert_eq!(
         registry.snapshot(fingerprint).expect("snapshot").state,
         RouteStateKind::Ready
+    );
+}
+
+#[test]
+fn recovered_worker_preserves_its_launch_activation_across_route_replacement() {
+    let registry = Registry::new(false);
+    let fingerprint = fingerprint(120);
+    let token = TokenDigest::from_token(b"token-120");
+    registry
+        .restore_binding(fingerprint, token)
+        .expect("persisted binding");
+    registry
+        .register_connected_mcp(
+            registration(fingerprint, token, "mcp-a"),
+            launch("replacement-activation"),
+        )
+        .expect("activation");
+    let permit = registry
+        .authorize_worker_recovery(fingerprint, "worker-recovered")
+        .expect("recovery authorization");
+    assert_eq!(
+        registry
+            .publish_recovered_worker(
+                fingerprint,
+                &permit,
+                Some("original-activation"),
+                worker("worker-recovered"),
+            )
+            .expect("worker publication"),
+        Some("replacement-activation".to_owned())
+    );
+
+    assert_eq!(
+        registry
+            .cancel_activation(fingerprint, &session("mcp-a"), "original-activation")
+            .expect("activation cancellation status"),
+        crate::daemon::common::control::ActivationCancellation::Published
     );
 }
 
@@ -771,7 +808,7 @@ fn recovered_worker_supersedes_restart_activation_without_a_second_worker() {
         .expect("recovery authorization");
     assert_eq!(
         registry
-            .publish_recovered_worker(fingerprint, &permit, worker("worker-survivor"))
+            .publish_recovered_worker(fingerprint, &permit, None, worker("worker-survivor"))
             .expect("recovered worker"),
         Some("restart-activation".to_owned())
     );
@@ -1110,7 +1147,7 @@ fn recovery_permits_cover_existing_ready_and_recovering_worker_generations() {
     ));
     assert_eq!(
         registry
-            .publish_recovered_worker(fingerprint, &ready, worker("survivor"))
+            .publish_recovered_worker(fingerprint, &ready, None, worker("survivor"))
             .unwrap(),
         None
     );
@@ -1130,7 +1167,7 @@ fn recovery_permits_cover_existing_ready_and_recovering_worker_generations() {
     ));
     assert_eq!(
         registry
-            .publish_recovered_worker(fingerprint, &recovering, worker("survivor"))
+            .publish_recovered_worker(fingerprint, &recovering, None, worker("survivor"))
             .unwrap(),
         None
     );
@@ -1139,7 +1176,7 @@ fn recovery_permits_cover_existing_ready_and_recovering_worker_generations() {
         .begin_recovery(fingerprint, Some(worker("new-generation")), 2_000)
         .unwrap();
     assert_eq!(
-        registry.publish_recovered_worker(fingerprint, &recovering, worker("survivor")),
+        registry.publish_recovered_worker(fingerprint, &recovering, None, worker("survivor")),
         Err(RegistryError::RecoveryGenerationChanged)
     );
 }
