@@ -171,7 +171,9 @@ pub(crate) async fn serve(options: ServerOptions) -> Result<(), CliError> {
     let sockets = socket::Hub::restarting(restarting_workers);
     let state = Arc::new(DaemonState {
         sockets,
-        registry: Registry::new(options.pass_through).with_require_worker(options.require_worker),
+        registry: Registry::new(options.pass_through)
+            .with_require_worker(options.require_worker)
+            .with_max_tokens_per_identity(options.max_tokens_per_identity),
         identity: load_or_create_daemon_identity()?,
         descriptor: crate::daemon::common::control::descriptor(ComponentRole::Daemon),
         instance_id: uuid::Uuid::now_v7().to_string(),
@@ -609,7 +611,8 @@ fn register_mcp_blocking(
         Err(response) => return response,
     };
     // Enrollment is open to reachable clients with a valid identity proof. The registry binds
-    // this credential digest to that fingerprint and rejects attempts to rebind either side.
+    // this credential digest to that fingerprint's route, never rebinding a bound digest, and
+    // admits a bounded number of distinct tokens per fingerprint.
     let directive = match state.registry.register_mcp(
         McpRegistration {
             fingerprint: transcript.initiator_fingerprint,
@@ -620,7 +623,19 @@ fn register_mcp_blocking(
         launch,
     ) {
         Ok(directive) => directive,
-        Err(error) => return registry_error(error),
+        Err(error) => {
+            if error == RegistryError::RouteTokenLimitReached {
+                let fingerprint = transcript.initiator_fingerprint.to_string();
+                log::warn!(
+                    target: "nemo_relay.daemon",
+                    event = "mcp_registration_rejected",
+                    fingerprint = fingerprint.as_str(),
+                    reason = "route_token_limit_reached";
+                    "Rejected a new client token for an identity that holds the maximum number of route tokens"
+                );
+            }
+            return registry_error(error);
+        }
     };
     if reuse_session {
         let session = sessions
@@ -1613,6 +1628,13 @@ async fn public_proxy_inner(
             Err(ResolveError::UnknownToken) => {
                 return control_message(StatusCode::UNAUTHORIZED, "invalid route credential");
             }
+            // A bound token whose route has no live MCP session (for example, a harness whose MCP
+            // exited during a daemon restart) passes through like an unbound token instead of
+            // returning 503 that harnesses retry indefinitely. Strict mode keeps the 503.
+            Err(ResolveError::Unavailable(_)) if !state.registry.requires_worker() => {
+                log_anonymous_pass_through(route, AnonymousReason::NoLiveSession);
+                (ResolvedTarget::PassThrough, ProviderAccess::Anonymous)
+            }
             Err(ResolveError::Unavailable(_)) => return unavailable_response(),
         },
     };
@@ -1709,6 +1731,7 @@ enum ProviderAccess {
 enum AnonymousReason {
     MissingCredential,
     UnboundCredential,
+    NoLiveSession,
 }
 
 impl AnonymousReason {
@@ -1716,6 +1739,7 @@ impl AnonymousReason {
         match self {
             Self::MissingCredential => "missing_credential",
             Self::UnboundCredential => "unbound_credential",
+            Self::NoLiveSession => "no_live_session",
         }
     }
 }
@@ -1741,9 +1765,11 @@ fn log_named_upstream_without_route(provider: ProviderRoute) {
 fn log_anonymous_pass_through(route: PublicRoute, reason: AnonymousReason) {
     static MISSING: OnceLock<LogRateLimiter> = OnceLock::new();
     static UNBOUND: OnceLock<LogRateLimiter> = OnceLock::new();
+    static NO_LIVE_SESSION: OnceLock<LogRateLimiter> = OnceLock::new();
     let limiter = match reason {
         AnonymousReason::MissingCredential => &MISSING,
         AnonymousReason::UnboundCredential => &UNBOUND,
+        AnonymousReason::NoLiveSession => &NO_LIVE_SESSION,
     }
     .get_or_init(|| LogRateLimiter::new(UPSTREAM_FAILURE_LOG_INTERVAL));
     let Some(suppressed_since_last_emit) = limiter.record() else {
@@ -2962,8 +2988,9 @@ fn unavailable_response() -> Response<Body> {
 
 fn registry_error(error: RegistryError) -> Response<Body> {
     let status = match error {
-        RegistryError::TokenAlreadyBound | RegistryError::FingerprintTokenMismatch => {
+        RegistryError::TokenAlreadyBound | RegistryError::RouteTokenLimitReached => {
             // A definitive rejection: the client must serve without a route rather than retry.
+            // The token limit reuses this code so every client version treats it as final.
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(json!({ "error": {
