@@ -276,25 +276,279 @@ fn worker_status_snapshots_omit_routes_without_assigned_workers() {
 }
 
 #[test]
-fn token_and_fingerprint_bindings_cannot_be_reassigned() {
+fn token_bindings_cannot_be_reassigned_to_another_fingerprint() {
     let registry = Registry::new(false);
     let first_fingerprint = fingerprint(3);
     let other_fingerprint = fingerprint(4);
     let token = TokenDigest::from_token(b"stable-token");
+    let joined = TokenDigest::from_token(b"different-token");
     registry
         .restore_binding(first_fingerprint, token)
         .expect("binding");
+    registry
+        .restore_binding(first_fingerprint, joined)
+        .expect("a second token joins the same route");
+    for copied in [token, joined] {
+        assert_eq!(
+            registry.restore_binding(other_fingerprint, copied),
+            Err(RegistryError::TokenAlreadyBound)
+        );
+        assert_eq!(
+            registry.register_connected_mcp(
+                registration(other_fingerprint, copied, "copied"),
+                launch("copied"),
+            ),
+            Err(RegistryError::TokenAlreadyBound)
+        );
+    }
+}
+
+#[test]
+fn tokens_for_one_identity_share_its_route_and_worker() {
+    let registry = Registry::new(false);
+    let fingerprint = fingerprint(40);
+    let old = TokenDigest::from_token(b"old-token");
+    let new = TokenDigest::from_token(b"new-token");
+    assert!(matches!(
+        registry
+            .register_connected_mcp(registration(fingerprint, old, "mcp-old"), launch("first"))
+            .unwrap(),
+        BrokerDirective::LaunchWorker { .. }
+    ));
+    assert!(matches!(
+        registry
+            .register_connected_mcp(registration(fingerprint, new, "mcp-new"), launch("second"))
+            .unwrap(),
+        BrokerDirective::WaitForWorker { .. }
+    ));
+    assert_eq!(registry.snapshot(fingerprint).unwrap().reference_count, 2);
+    registry
+        .mark_worker_ready(fingerprint, "first", worker("worker-shared"))
+        .unwrap();
+    for token in [old, new] {
+        let ResolvedTarget::Worker(request) = registry.resolve_target(&token).unwrap() else {
+            panic!("expected the shared worker");
+        };
+        assert_eq!(request.fingerprint(), fingerprint);
+        assert_eq!(request.target().worker_id(), "worker-shared");
+    }
+
+    // Old and new sessions interleave across rounds without rebinding or blocking each other.
+    for round in 0..4 {
+        for (token, name) in [(old, "old"), (new, "new")] {
+            let id = format!("{name}-{round}");
+            assert!(matches!(
+                registry
+                    .register_connected_mcp(registration(fingerprint, token, &id), launch(&id))
+                    .unwrap(),
+                BrokerDirective::ReuseWorker { .. }
+            ));
+            assert!(matches!(
+                registry.resolve_target(&old).unwrap(),
+                ResolvedTarget::Worker(_)
+            ));
+            assert!(matches!(
+                registry.resolve_target(&new).unwrap(),
+                ResolvedTarget::Worker(_)
+            ));
+            registry
+                .release_mcp(fingerprint, &session(&id), 1_000)
+                .unwrap();
+        }
+    }
+    assert_eq!(registry.worker_status_snapshots().len(), 1);
+}
+
+#[test]
+fn identity_token_limit_rejects_only_new_tokens() {
+    let registry = Registry::new(false);
+    let fingerprint = fingerprint(41);
+    let tokens: Vec<_> = (0..=DEFAULT_MAX_TOKENS_PER_IDENTITY)
+        .map(|index| TokenDigest::from_token(format!("token-{index}").as_bytes()))
+        .collect();
+    for (index, token) in tokens[..DEFAULT_MAX_TOKENS_PER_IDENTITY].iter().enumerate() {
+        registry
+            .register_connected_mcp(
+                registration(fingerprint, *token, &format!("mcp-{index}")),
+                launch(&format!("launch-{index}")),
+            )
+            .unwrap();
+    }
+    let over_limit = tokens[DEFAULT_MAX_TOKENS_PER_IDENTITY];
     assert_eq!(
-        registry.restore_binding(other_fingerprint, token),
-        Err(RegistryError::TokenAlreadyBound)
-    );
-    assert_eq!(
-        registry.restore_binding(
-            first_fingerprint,
-            TokenDigest::from_token(b"different-token")
+        registry.register_connected_mcp(
+            registration(fingerprint, over_limit, "mcp-over"),
+            launch("over"),
         ),
-        Err(RegistryError::FingerprintTokenMismatch)
+        Err(RegistryError::RouteTokenLimitReached)
     );
+    assert!(matches!(
+        registry.resolve_target(&over_limit),
+        Err(ResolveError::UnknownToken)
+    ));
+    // Every bound token keeps registering at the limit.
+    for token in &tokens[..DEFAULT_MAX_TOKENS_PER_IDENTITY] {
+        registry
+            .register_connected_mcp(registration(fingerprint, *token, "mcp-again"), launch("x"))
+            .unwrap();
+    }
+}
+
+fn bind_active_tokens(
+    registry: &Registry,
+    fingerprint: Fingerprint,
+    count: usize,
+) -> Vec<TokenDigest> {
+    (0..count)
+        .map(|index| {
+            let token = TokenDigest::from_token(format!("active-{index}").as_bytes());
+            registry
+                .register_connected_mcp(
+                    registration(fingerprint, token, &format!("session-{index}")),
+                    launch(&format!("launch-{index}")),
+                )
+                .unwrap();
+            token
+        })
+        .collect()
+}
+
+fn release(registry: &Registry, fingerprint: Fingerprint, session_id: &str) {
+    registry
+        .release_mcp(fingerprint, &session(session_id), u64::MAX)
+        .unwrap();
+}
+
+#[test]
+fn a_new_token_at_the_limit_releases_the_oldest_idle_token() {
+    let registry = Registry::new(false);
+    let fingerprint = fingerprint(43);
+    let tokens = bind_active_tokens(&registry, fingerprint, DEFAULT_MAX_TOKENS_PER_IDENTITY);
+    // The two oldest tokens lose their sessions, as when old harnesses exit.
+    release(&registry, fingerprint, "session-0");
+    release(&registry, fingerprint, "session-1");
+    let newest = TokenDigest::from_token(b"newest");
+    registry
+        .register_connected_mcp(
+            registration(fingerprint, newest, "session-new"),
+            launch("new"),
+        )
+        .unwrap();
+    // Only the oldest idle token was released; it now resolves like any unbound token.
+    assert!(matches!(
+        registry.resolve_target(&tokens[0]),
+        Err(ResolveError::UnknownToken)
+    ));
+    for token in tokens[1..].iter().chain([&newest]) {
+        assert!(registry.resolve_target(token).is_ok());
+    }
+    // A released token can bind again later, releasing the next idle token.
+    registry
+        .register_connected_mcp(
+            registration(fingerprint, tokens[0], "session-back"),
+            launch("back"),
+        )
+        .unwrap();
+    assert!(matches!(
+        registry.resolve_target(&tokens[1]),
+        Err(ResolveError::UnknownToken)
+    ));
+}
+
+#[test]
+fn re_registration_makes_a_token_most_recent() {
+    let registry = Registry::new(false);
+    let fingerprint = fingerprint(44);
+    let tokens = bind_active_tokens(&registry, fingerprint, DEFAULT_MAX_TOKENS_PER_IDENTITY);
+    release(&registry, fingerprint, "session-0");
+    release(&registry, fingerprint, "session-1");
+    // Token 0 is used again, then goes idle again: it is now newer than token 1.
+    registry
+        .register_connected_mcp(
+            registration(fingerprint, tokens[0], "session-0b"),
+            launch("0b"),
+        )
+        .unwrap();
+    release(&registry, fingerprint, "session-0b");
+    registry
+        .register_connected_mcp(
+            registration(
+                fingerprint,
+                TokenDigest::from_token(b"newest"),
+                "session-new",
+            ),
+            launch("new"),
+        )
+        .unwrap();
+    assert!(registry.resolve_target(&tokens[0]).is_ok());
+    assert!(matches!(
+        registry.resolve_target(&tokens[1]),
+        Err(ResolveError::UnknownToken)
+    ));
+}
+
+#[test]
+fn configured_token_limit_rejects_only_when_every_token_is_in_use() {
+    let registry = Registry::new(false).with_max_tokens_per_identity(2);
+    let fingerprint = fingerprint(45);
+    let tokens = bind_active_tokens(&registry, fingerprint, 2);
+    let third = TokenDigest::from_token(b"third");
+    assert_eq!(
+        registry.register_connected_mcp(registration(fingerprint, third, "session-3"), launch("3")),
+        Err(RegistryError::RouteTokenLimitReached)
+    );
+    assert!(
+        tokens
+            .iter()
+            .all(|token| registry.resolve_target(token).is_ok())
+    );
+    release(&registry, fingerprint, "session-0");
+    registry
+        .register_connected_mcp(registration(fingerprint, third, "session-3"), launch("3"))
+        .unwrap();
+    // Out-of-range limits are clamped to at least one token.
+    let single = Registry::new(false).with_max_tokens_per_identity(0);
+    let single_fingerprint = self::fingerprint(46);
+    bind_active_tokens(&single, single_fingerprint, 1);
+    assert_eq!(
+        single.register_connected_mcp(
+            registration(
+                single_fingerprint,
+                TokenDigest::from_token(b"second"),
+                "session-2"
+            ),
+            launch("2"),
+        ),
+        Err(RegistryError::RouteTokenLimitReached)
+    );
+}
+
+#[test]
+fn reference_capacity_rejection_does_not_consume_a_token_slot() {
+    let registry = Registry::new(false);
+    let fingerprint = fingerprint(42);
+    let first = TokenDigest::from_token(b"first");
+    for index in 0..MAX_MCP_REFERENCES_PER_ROUTE {
+        registry
+            .register_mcp(
+                registration(fingerprint, first, &format!("mcp-{index}")),
+                launch(&format!("launch-{index}")),
+            )
+            .unwrap();
+    }
+    let second = TokenDigest::from_token(b"second");
+    assert_eq!(
+        registry.register_mcp(
+            registration(fingerprint, second, "mcp-full"),
+            launch("full")
+        ),
+        Err(RegistryError::McpReferenceCapacityReached)
+    );
+    // The rejected registration left the new token unbound.
+    assert!(matches!(
+        registry.resolve_target(&second),
+        Err(ResolveError::UnknownToken)
+    ));
 }
 
 #[test]
@@ -912,6 +1166,38 @@ fn capacity_pressure_evicts_only_a_zero_reference_empty_route() {
         registry.resolve_target(&first_token),
         Err(ResolveError::UnknownToken)
     ));
+}
+
+#[test]
+fn evicting_a_route_unbinds_every_token() {
+    let registry = Registry::new(false).with_route_capacity(1);
+    let first = fingerprint(42);
+    let tokens = [
+        TokenDigest::from_token(b"evicted-a"),
+        TokenDigest::from_token(b"evicted-b"),
+    ];
+    for (index, token) in tokens.iter().enumerate() {
+        let id = format!("mcp-{index}");
+        registry
+            .register_connected_mcp(registration(first, *token, &id), launch(&id))
+            .unwrap();
+        registry.release_mcp(first, &session(&id), 1_000).unwrap();
+    }
+    let second = fingerprint(43);
+    registry
+        .register_connected_mcp(
+            registration(second, TokenDigest::from_token(b"evictor"), "mcp-b"),
+            launch("second"),
+        )
+        .expect("inactive route should be evicted");
+    for token in tokens {
+        assert!(matches!(
+            registry.resolve_target(&token),
+            Err(ResolveError::UnknownToken)
+        ));
+        // A freed token may bind to another identity once its route is gone.
+        assert_eq!(registry.restore_binding(second, token), Ok(()));
+    }
 }
 
 #[test]

@@ -561,28 +561,64 @@ async fn open_enrollment_binds_new_tokens_without_allowlist_and_prevents_route_t
                 .unwrap();
             assert_eq!(response.status(), StatusCode::OK);
         }
-        assert_eq!(
-            enroll_test_mcp(&state, &origin, &other_identity, &first, "takeover")
-                .await
-                .status(),
-            StatusCode::UNAUTHORIZED,
-        );
-        let third = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0xa3; 32]);
-        let rebind = enroll_test_mcp(&state, &origin, &identity, &third, "rebind").await;
-        assert_eq!(rebind.status(), StatusCode::UNAUTHORIZED);
         // The coded rejection tells the MCP client to serve without a route instead of retrying.
-        let body: serde_json::Value =
-            serde_json::from_slice(&rebind.into_body().collect().await.unwrap().to_bytes())
+        async fn assert_rejected(response: Response<Body>) {
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            let body: serde_json::Value =
+                serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                    .unwrap();
+            assert_eq!(body["error"]["code"], ROUTE_CREDENTIAL_REJECTED_CODE);
+        }
+        assert_rejected(
+            enroll_test_mcp(&state, &origin, &other_identity, &first, "takeover").await,
+        )
+        .await;
+        // Replacement tokens for the same identity join its route without another launch.
+        let activations = lock(&state.activations).len();
+        let mut sessions = vec!["first".to_owned()];
+        for byte in [0xa3, 0xa4, 0xa5] {
+            let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([byte; 32]);
+            let session = format!("joined-{byte:x}");
+            let response = enroll_test_mcp(&state, &origin, &identity, &token, &session).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let response: McpRegisterResponse =
+                serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                    .unwrap();
+            assert_eq!(
+                matches!(response.directive, BrokerDirective::UsePassThrough),
+                pass_through
+            );
+            assert!(!matches!(
+                response.directive,
+                BrokerDirective::LaunchWorker { .. }
+            ));
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::post("/hooks/pi")
+                        .header(CLIENT_TOKEN_HEADER, &token)
+                        .body(Body::from("{}"))
+                        .unwrap(),
+                )
+                .await
                 .unwrap();
-        assert_eq!(body["error"]["code"], ROUTE_CREDENTIAL_REJECTED_CODE);
-        state
-            .registry
-            .release_mcp(
-                identity.fingerprint(),
-                &McpSessionId::new("first").unwrap(),
-                u64::MAX,
-            )
-            .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            sessions.push(session);
+        }
+        assert_eq!(lock(&state.activations).len(), activations);
+        let over_limit = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0xa6; 32]);
+        assert_rejected(enroll_test_mcp(&state, &origin, &identity, &over_limit, "over").await)
+            .await;
+        for session in sessions {
+            state
+                .registry
+                .release_mcp(
+                    identity.fingerprint(),
+                    &McpSessionId::new(session).unwrap(),
+                    u64::MAX,
+                )
+                .unwrap();
+        }
         let response = app
             .oneshot(
                 Request::post("/hooks/pi")
@@ -592,7 +628,13 @@ async fn open_enrollment_binds_new_tokens_without_allowlist_and_prevents_route_t
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        // With every session released the token is still bound; outside strict mode it passes
+        // through like an unbound token instead of returning a 503 that harnesses retry forever.
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.into_body().collect().await.unwrap().to_bytes(),
+            HookRoute::Pi.pass_through_body()
+        );
         if pass_through {
             assert!(lock(&state.activations).is_empty());
         }
@@ -1600,7 +1642,7 @@ fn registry_errors_map_to_stable_control_statuses() {
         RegistryError::UnknownRoute,
         RegistryError::UnknownMcpSession,
         RegistryError::TokenAlreadyBound,
-        RegistryError::FingerprintTokenMismatch,
+        RegistryError::RouteTokenLimitReached,
         RegistryError::ActivationMismatch,
         RegistryError::WorkerMismatch,
         RegistryError::RecoveryNotAuthorized,
@@ -1672,6 +1714,7 @@ fn advertised_https_is_valid_behind_a_reverse_proxy_without_native_tls() {
         advertise_address: Some("https://relay.example.com:443".into()),
         pass_through: false,
         require_worker: false,
+        max_tokens_per_identity: crate::daemon::broker::registry::DEFAULT_MAX_TOKENS_PER_IDENTITY,
         gateway: crate::server::GatewayOverrides::default(),
         tls_cert: None,
         tls_key: None,
@@ -1699,6 +1742,7 @@ fn daemon_origin_enforces_bind_and_tls_advertisement_contracts() {
         advertise_address: None,
         pass_through: false,
         require_worker: false,
+        max_tokens_per_identity: crate::daemon::broker::registry::DEFAULT_MAX_TOKENS_PER_IDENTITY,
         gateway: crate::server::GatewayOverrides::default(),
         tls_cert: None,
         tls_key: None,
@@ -1788,6 +1832,7 @@ async fn daemon_startup_rejects_an_unpaired_tls_identity_after_initializing_stat
         advertise_address: None,
         pass_through: false,
         require_worker: false,
+        max_tokens_per_identity: crate::daemon::broker::registry::DEFAULT_MAX_TOKENS_PER_IDENTITY,
         gateway: crate::server::GatewayOverrides::default(),
         tls_cert: Some(state_directory.path().join("certificate.pem")),
         tls_key: None,
@@ -1814,6 +1859,7 @@ async fn daemon_plain_listener_starts_and_reports_address_conflicts() {
         advertise_address: None,
         pass_through: true,
         require_worker: false,
+        max_tokens_per_identity: crate::daemon::broker::registry::DEFAULT_MAX_TOKENS_PER_IDENTITY,
         gateway: crate::server::GatewayOverrides::default(),
         tls_cert: None,
         tls_key: None,
@@ -1845,6 +1891,8 @@ async fn daemon_plain_listener_starts_and_reports_address_conflicts() {
             advertise_address: None,
             pass_through: true,
             require_worker: false,
+            max_tokens_per_identity:
+                crate::daemon::broker::registry::DEFAULT_MAX_TOKENS_PER_IDENTITY,
             gateway: crate::server::GatewayOverrides::default(),
             tls_cert: None,
             tls_key: None,
@@ -3340,6 +3388,130 @@ async fn global_pass_through_lends_daemon_provider_auth_to_anonymous_requests() 
     assert_eq!(response.status(), StatusCode::OK);
     let (headers, _) = take_provider_request(&captured);
     assert_eq!(headers[AUTHORIZATION], "Bearer configured-provider");
+    provider_task.abort();
+}
+
+#[tokio::test]
+async fn bound_token_without_a_live_session_passes_through_anonymously() {
+    let (provider_origin, captured, provider_task) = capturing_provider().await;
+    let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0x6a_u8; 32]);
+    let credential = RouteCredential::parse(token.clone()).expect("route credential");
+    let state = test_daemon_state(
+        false,
+        &token,
+        GatewayConfig {
+            openai_base_url: provider_origin,
+            openai_auth_header: Some("Bearer daemon-held-secret".into()),
+            ..GatewayConfig::default()
+        },
+    );
+    let fingerprint = MachineIdentity::generate()
+        .expect("machine identity")
+        .identity
+        .fingerprint();
+    let session = McpSessionId::new("exited-mcp").expect("session");
+    state
+        .registry
+        .register_mcp(
+            McpRegistration {
+                fingerprint,
+                token_digest: credential.digest(),
+                session_id: session.clone(),
+                lease_expires_at_unix_ms: u64::MAX,
+            },
+            WorkerLaunch {
+                activation_id: "exited-mcp-activation".into(),
+                activation_token: SensitiveString::new("activation-token").expect("token"),
+                deadline_unix_ms: u64::MAX,
+                bind_ip: Ipv4Addr::LOCALHOST,
+                port: 0,
+                advertise_address: None,
+            },
+        )
+        .expect("register route");
+    // The harness's MCP exits (for example during a daemon reinstall); the token stays bound.
+    state
+        .registry
+        .release_mcp(fingerprint, &session, u64::MAX)
+        .expect("release");
+    assert!(matches!(
+        state.registry.resolve_target(&credential.digest()),
+        Err(ResolveError::Unavailable(_))
+    ));
+    let app = router(Arc::clone(&state));
+
+    // Pass-through like an unbound token: the caller's own credential, never the daemon's.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/v1/responses")
+                .header(CLIENT_TOKEN_HEADER, &token)
+                .header(AUTHORIZATION, "Bearer caller-owned")
+                .body(Body::from("orphaned harness"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (headers, body) = take_provider_request(&captured);
+    assert_eq!(headers[AUTHORIZATION], "Bearer caller-owned");
+    assert_eq!(body, "orphaned harness");
+
+    // A client-named upstream still fails closed without a live route.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/v1/responses")
+                .header(CLIENT_TOKEN_HEADER, &token)
+                .header(AUTHORIZATION, "Bearer named-upstream-key")
+                .header(
+                    crate::agents::pi::alignment::UPSTREAM_BASE_URL_HEADER,
+                    "https://named.example.com",
+                )
+                .body(Body::from("named"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(captured.lock().unwrap().is_none());
+
+    // Strict mode keeps the 503.
+    let mut strict = test_daemon_state(false, &token, GatewayConfig::default());
+    Arc::get_mut(&mut strict).unwrap().registry = Registry::new(false).with_require_worker(true);
+    strict
+        .registry
+        .register_mcp(
+            McpRegistration {
+                fingerprint,
+                token_digest: credential.digest(),
+                session_id: session.clone(),
+                lease_expires_at_unix_ms: u64::MAX,
+            },
+            WorkerLaunch {
+                activation_id: "strict-activation".into(),
+                activation_token: SensitiveString::new("activation-token").expect("token"),
+                deadline_unix_ms: u64::MAX,
+                bind_ip: Ipv4Addr::LOCALHOST,
+                port: 0,
+                advertise_address: None,
+            },
+        )
+        .expect("register route");
+    strict
+        .registry
+        .release_mcp(fingerprint, &session, u64::MAX)
+        .expect("release");
+    let response = router(strict)
+        .oneshot(
+            Request::post("/v1/responses")
+                .header(CLIENT_TOKEN_HEADER, &token)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     provider_task.abort();
 }
 

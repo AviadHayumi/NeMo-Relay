@@ -20,6 +20,17 @@ fn activation_retry_delay(attempts: u32) -> u64 {
 
 const MAX_ROUTE_BINDINGS: usize = 4_096;
 const MAX_MCP_REFERENCES_PER_ROUTE: usize = 1_024;
+/// Default number of distinct route tokens one machine-user identity may hold at once.
+///
+/// A replaced token file yields a new token for the same identity while sessions holding the old
+/// token keep running, so a route accepts several tokens instead of rebinding to the latest one.
+/// This is a resource bound on the in-memory token table, not a security control: a new token at
+/// the limit first releases the identity's least recently registered token that has no live MCP
+/// session, and is rejected only when every bound token is in use. Operators can change it with
+/// `nemo-relay daemon --max-tokens-per-identity` or `NEMO_RELAY_DAEMON_MAX_TOKENS_PER_IDENTITY`.
+pub(crate) const DEFAULT_MAX_TOKENS_PER_IDENTITY: usize = 4;
+/// Upper bound accepted for the per-identity token limit.
+pub(crate) const MAX_TOKENS_PER_IDENTITY_LIMIT: usize = 64;
 
 /// An authenticated MCP registration applied idempotently by session ID.
 #[derive(Debug, Clone)]
@@ -36,6 +47,7 @@ pub(crate) struct Registry {
     require_worker: bool,
     retry_after_ms: u64,
     route_capacity: usize,
+    max_tokens_per_identity: usize,
     inner: RwLock<RegistryInner>,
 }
 
@@ -132,8 +144,17 @@ impl Registry {
             require_worker: false,
             retry_after_ms: DEFAULT_RETRY_AFTER_MS,
             route_capacity: MAX_ROUTE_BINDINGS,
+            max_tokens_per_identity: DEFAULT_MAX_TOKENS_PER_IDENTITY,
             inner: RwLock::new(RegistryInner::default()),
         }
+    }
+
+    /// Sets how many distinct route tokens one identity may hold; see
+    /// [`DEFAULT_MAX_TOKENS_PER_IDENTITY`].
+    pub(crate) fn with_max_tokens_per_identity(mut self, max_tokens_per_identity: usize) -> Self {
+        self.max_tokens_per_identity =
+            max_tokens_per_identity.clamp(1, MAX_TOKENS_PER_IDENTITY_LIMIT);
+        self
     }
 
     pub(crate) fn with_require_worker(mut self, require_worker: bool) -> Self {
@@ -308,11 +329,18 @@ impl Registry {
         evict_inactive_routes_at_capacity(&mut inner, fingerprint, self.route_capacity);
         validate_binding(&inner, fingerprint, token_digest)?;
         validate_capacity(&inner, fingerprint, self.route_capacity)?;
-        inner.tokens.insert(token_digest, fingerprint);
-        inner
-            .routes
-            .entry(fingerprint)
-            .or_insert_with(|| RouteEntry::new(token_digest, self.global_pass_through));
+        admit_token(
+            &mut inner,
+            fingerprint,
+            token_digest,
+            self.max_tokens_per_identity,
+        )?;
+        bind_token(
+            &mut inner,
+            fingerprint,
+            token_digest,
+            self.global_pass_through,
+        );
         Ok(())
     }
 
@@ -332,24 +360,33 @@ impl Registry {
         );
         validate_binding(&inner, registration.fingerprint, registration.token_digest)?;
         validate_capacity(&inner, registration.fingerprint, self.route_capacity)?;
-        inner
-            .tokens
-            .insert(registration.token_digest, registration.fingerprint);
-        let route = inner
-            .routes
-            .entry(registration.fingerprint)
-            .or_insert_with(|| {
-                RouteEntry::new(registration.token_digest, self.global_pass_through)
-            });
-        if !route.refs.contains_key(&registration.session_id)
+        // Check reference capacity before binding, so a rejected registration never consumes one
+        // of the identity's limited token slots.
+        if let Some(route) = inner.routes.get(&registration.fingerprint)
+            && !route.refs.contains_key(&registration.session_id)
             && route.refs.len() >= MAX_MCP_REFERENCES_PER_ROUTE
         {
             return Err(RegistryError::McpReferenceCapacityReached);
         }
+        admit_token(
+            &mut inner,
+            registration.fingerprint,
+            registration.token_digest,
+            self.max_tokens_per_identity,
+        )?;
+        let route = bind_token(
+            &mut inner,
+            registration.fingerprint,
+            registration.token_digest,
+            self.global_pass_through,
+        );
         route.refs.insert(
             registration.session_id.clone(),
             registration.lease_expires_at_unix_ms,
         );
+        route
+            .ref_tokens
+            .insert(registration.session_id.clone(), registration.token_digest);
         Ok(route.directive_for(&registration.session_id, launch, self.retry_after_ms))
     }
 
@@ -433,6 +470,7 @@ impl Registry {
             .get_mut(&fingerprint)
             .ok_or(RegistryError::UnknownRoute)?;
         route.connected.remove(session_id);
+        route.ref_tokens.remove(session_id);
         if route.refs.remove(session_id).is_none() {
             return Ok(ReleaseAction::NoChange);
         }
@@ -470,6 +508,7 @@ impl Registry {
             };
             for session in expired {
                 route.refs.remove(&session);
+                route.ref_tokens.remove(&session);
                 route.connected.remove(&session);
             }
             let action = route.after_reference_removed(&removed_session, drain_deadline_unix_ms);
@@ -1047,23 +1086,88 @@ fn evict_inactive_routes_at_capacity(
                 route.state,
                 RouteState::Empty | RouteState::PassThrough { permanent: true }
             ))
-        .then_some((*fingerprint, route.token_digest))
+        .then_some(*fingerprint)
     });
-    if let Some((fingerprint, token_digest)) = removable {
-        inner.routes.remove(&fingerprint);
-        inner.tokens.remove(&token_digest);
+    if let Some(route) = removable.and_then(|fingerprint| inner.routes.remove(&fingerprint)) {
+        for token_digest in &route.token_digests {
+            inner.tokens.remove(token_digest);
+        }
     }
+}
+
+/// Binds a validated token to the identity's single route, creating the route on first use.
+///
+/// Every digest in `tokens` maps to the route whose `token_digests` contains it; additional
+/// tokens join the existing route and never replace or remove an earlier binding.
+fn bind_token(
+    inner: &mut RegistryInner,
+    fingerprint: Fingerprint,
+    token_digest: TokenDigest,
+    global_pass_through: bool,
+) -> &mut RouteEntry {
+    let newly_bound = inner.tokens.insert(token_digest, fingerprint).is_none();
+    let route = inner
+        .routes
+        .entry(fingerprint)
+        .or_insert_with(|| RouteEntry::new(global_pass_through));
+    if !newly_bound {
+        // Keep `token_digests` in least-recently-registered order for idle-token release.
+        route.token_digests.retain(|digest| *digest != token_digest);
+    }
+    route.token_digests.push(token_digest);
+    route
+}
+
+/// Makes room for a new token at the identity's limit by releasing its least recently registered
+/// token with no live MCP session. A released token resolves as unknown and passes through like any
+/// unbound token; it can bind again later. Rejects only when every bound token is in use.
+fn admit_token(
+    inner: &mut RegistryInner,
+    fingerprint: Fingerprint,
+    token_digest: TokenDigest,
+    max_tokens_per_identity: usize,
+) -> Result<(), RegistryError> {
+    let Some(route) = inner.routes.get_mut(&fingerprint) else {
+        return Ok(());
+    };
+    if route.token_digests.contains(&token_digest)
+        || route.token_digests.len() < max_tokens_per_identity
+    {
+        return Ok(());
+    }
+    let Some(position) = route.token_digests.iter().position(|digest| {
+        !route
+            .ref_tokens
+            .values()
+            .any(|session_digest| session_digest == digest)
+    }) else {
+        return Err(RegistryError::RouteTokenLimitReached);
+    };
+    let released = route.token_digests.remove(position);
+    inner.tokens.remove(&released);
+    log::info!(
+        target: "nemo_relay.daemon",
+        event = "route_token_released",
+        reason = "identity_token_limit";
+        "Released an idle route token to admit a new token for the same identity"
+    );
+    Ok(())
 }
 
 #[derive(Default)]
 struct RegistryInner {
     routes: HashMap<Fingerprint, RouteEntry>,
+    /// Many-to-one: an identity may hold up to its configured per-identity token limit.
     tokens: HashMap<TokenDigest, Fingerprint>,
 }
 
 struct RouteEntry {
-    token_digest: TokenDigest,
+    /// Every token bound to this route; mirrors the route's entries in `RegistryInner::tokens`.
+    token_digests: Vec<TokenDigest>,
     refs: BTreeMap<McpSessionId, u64>,
+    /// The token each referencing MCP session registered with; a bound token without a live
+    /// session here is idle and can be released at the identity's token limit.
+    ref_tokens: BTreeMap<McpSessionId, TokenDigest>,
     connected: BTreeSet<McpSessionId>,
     attempts: u32,
     retry_at_unix_ms: u64,
@@ -1092,10 +1196,11 @@ impl RouteEntry {
         self.retry_at_unix_ms = 0;
     }
 
-    fn new(token_digest: TokenDigest, global_pass_through: bool) -> Self {
+    fn new(global_pass_through: bool) -> Self {
         Self {
-            token_digest,
+            token_digests: Vec::with_capacity(1),
             refs: BTreeMap::new(),
+            ref_tokens: BTreeMap::new(),
             connected: BTreeSet::new(),
             attempts: 0,
             retry_at_unix_ms: 0,
@@ -1304,21 +1409,11 @@ fn validate_binding(
     fingerprint: Fingerprint,
     token_digest: TokenDigest,
 ) -> Result<(), RegistryError> {
-    if inner
-        .tokens
-        .get(&token_digest)
-        .is_some_and(|existing| *existing != fingerprint)
-    {
-        return Err(RegistryError::TokenAlreadyBound);
+    match inner.tokens.get(&token_digest) {
+        Some(existing) if *existing == fingerprint => Ok(()),
+        Some(_) => Err(RegistryError::TokenAlreadyBound),
+        None => Ok(()),
     }
-    if inner
-        .routes
-        .get(&fingerprint)
-        .is_some_and(|existing| !existing.token_digest.matches(&token_digest))
-    {
-        return Err(RegistryError::FingerprintTokenMismatch);
-    }
-    Ok(())
 }
 
 fn validate_capacity(
@@ -1420,8 +1515,8 @@ pub(crate) enum DrainCompletion {
 pub(crate) enum RegistryError {
     #[error("the route token is already bound to a different user-machine fingerprint")]
     TokenAlreadyBound,
-    #[error("the user-machine fingerprint is already bound to a different route token")]
-    FingerprintTokenMismatch,
+    #[error("the user-machine fingerprint has reached its route token limit")]
+    RouteTokenLimitReached,
     #[error("the broker route does not exist")]
     UnknownRoute,
     #[error("the broker route binding capacity has been reached")]
