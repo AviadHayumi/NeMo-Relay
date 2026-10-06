@@ -29,7 +29,7 @@ async function waitForExportFile(outputDir: string, prefix: string, timeoutMs = 
 }
 
 it(
-  'runs a live NeMo Relay binding smoke for session ATIF export and hook replay',
+  'preserves live ATIF and overwrite-mode ATOF exports after shutdown and late hooks',
   { skip: !liveSmokeEnabled },
   async () => {
     const outputDir = await fs.mkdtemp(path.join(os.tmpdir(), 'nemo-relay-openclaw-live-'));
@@ -44,6 +44,17 @@ it(
               enabled: true,
               config: {
                 version: 4,
+                atof: {
+                  enabled: true,
+                  sinks: [
+                    {
+                      type: 'file',
+                      output_directory: outputDir,
+                      filename: 'events.jsonl',
+                      mode: 'overwrite',
+                    },
+                  ],
+                },
                 atif: {
                   enabled: true,
                   agent_name: 'openclaw',
@@ -114,6 +125,13 @@ it(
         },
         { runId: 'live-run-1', sessionId: '../live-session:1', agentId: 'agent-live' },
       );
+      // Gateway shutdown starts before OpenClaw delivers its final completion hooks.
+      const gatewayStop = api.calls.hooks.find((hook) => hook.hookName === 'gateway_stop');
+      assert.ok(gatewayStop);
+      await gatewayStop.handler({ reason: 'shutdown' }, {});
+      const drainingStatus = await callGatewayStatus(api.calls.gatewayMethods[0]?.handler);
+      assert.equal(drainingStatus.status.state, 'ready');
+
       await llmOutput.handler(
         {
           runId: 'live-run-1',
@@ -142,9 +160,48 @@ it(
         },
       );
       await sessionEnd.handler(
+        { sessionId: '../live-session:1', messageCount: 1, reason: 'shutdown' },
+        { sessionId: '../live-session:1' },
+      );
+      const completedStatus = await callGatewayStatus(api.calls.gatewayMethods[0]?.handler);
+      assert.equal(completedStatus.status.state, 'ready');
+      assert.equal(completedStatus.counters.llmSpansReplayed, 1);
+      assert.equal(completedStatus.counters.toolSpansReplayed, 1);
+
+      // Service stop also drains sessions that never received a final session_end.
+      await sessionStart.handler({ sessionId: 'undrained-session' }, { sessionId: 'undrained-session' });
+      await service.stop?.({ stateDir: outputDir, config: {} as never, logger: api.logger });
+      const stoppedStatus = await callGatewayStatus(api.calls.gatewayMethods[0]?.handler);
+      assert.equal(stoppedStatus.status.state, 'stopped');
+      const eventFile = path.join(outputDir, 'events.jsonl');
+      const eventsBeforeLateHooks = await fs.readFile(eventFile, 'utf8');
+      const records = eventsBeforeLateHooks.trim().split('\n').map((line) => JSON.parse(line));
+      for (const category of ['agent', 'tool', 'llm']) {
+        const starts = records.filter((record) =>
+          record.kind === 'scope' && record.category === category && record.scope_category === 'start',
+        );
+        const ends = records.filter((record) =>
+          record.kind === 'scope' && record.category === category && record.scope_category === 'end',
+        );
+        assert.equal(starts.length, category === 'agent' ? 2 : 1, `expected paired ${category} scopes`);
+        assert.deepEqual(ends.map((record) => record.uuid), starts.map((record) => record.uuid));
+      }
+
+      await sessionEnd.handler(
         { sessionId: '../live-session:1', messageCount: 1, reason: 'idle' },
         { sessionId: '../live-session:1' },
       );
+
+      await sessionStart.handler({ sessionId: 'late-session' }, { sessionId: 'late-session' });
+      await llmOutput.handler(
+        { runId: 'late-run', sessionId: 'late-session', assistantTexts: ['late'] },
+        { runId: 'late-run', sessionId: 'late-session' },
+      );
+      await afterToolCall.handler(
+        { toolName: 'late_tool', params: {}, result: 'late', durationMs: 1 },
+        { sessionId: 'late-session', toolName: 'late_tool' },
+      );
+      assert.equal(await fs.readFile(eventFile, 'utf8'), eventsBeforeLateHooks);
 
       const exportedPath = await waitForExportFile(outputDir, 'live-');
       assert.ok(exportedPath, 'expected generic observability ATIF export');
@@ -152,9 +209,18 @@ it(
       assert.equal(typeof exported, 'object');
 
       const status = await callGatewayStatus(api.calls.gatewayMethods[0]?.handler);
+      assert.equal(status.status.state, 'stopped');
+      assert.deepEqual(status.counters, stoppedStatus.counters);
       assert.equal(status.outputs.atif, 'enabled');
       assert.equal(status.counters.llmSpansReplayed, 1);
       assert.equal(status.counters.toolSpansReplayed, 1);
+
+      // An explicit service start still creates a fresh runtime after shutdown.
+      await service.start({ stateDir: outputDir, config: {} as never, logger: api.logger });
+      await sessionStart.handler({ sessionId: 'restarted-session' }, { sessionId: 'restarted-session' });
+      const restartedStatus = await callGatewayStatus(api.calls.gatewayMethods[0]?.handler);
+      assert.equal(restartedStatus.status.state, 'ready');
+      assert.equal(restartedStatus.counters.marksEmitted, 1);
     } finally {
       if (serviceStarted) {
         await api.calls.services[0]?.stop?.({
@@ -168,6 +234,129 @@ it(
       } else {
         process.env.XDG_CONFIG_HOME = previousXdgConfigHome;
       }
+      await fs.rm(outputDir, { recursive: true, force: true });
+    }
+  },
+);
+
+it(
+  'joins session_end and service stop while native subscriber delivery is pending',
+  { skip: !liveSmokeEnabled },
+  async () => {
+    const outputDir = await fs.mkdtemp(path.join(os.tmpdir(), 'nemo-relay-openclaw-overlap-'));
+    const real = await loadRealNemoRelayModules();
+    let enterFlush!: () => void;
+    let releaseFlush!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enterFlush = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+      releaseFlush = resolve;
+    });
+    let flushCount = 0;
+    const modules: NemoRelayModules = {
+      ...real,
+      nf: {
+        ...real.nf,
+        flushSubscribers: async () => {
+          if (++flushCount === 1) {
+            enterFlush();
+            await released;
+          }
+          await real.nf.flushSubscribers?.();
+        },
+      },
+    };
+    const api = createApi({
+      pluginConfig: {
+        plugins: {
+          version: 1,
+          components: [
+            {
+              kind: 'observability',
+              enabled: true,
+              config: {
+                version: 4,
+                atof: {
+                  enabled: true,
+                  sinks: [
+                    {
+                      type: 'file',
+                      output_directory: outputDir,
+                      filename: 'events.jsonl',
+                      mode: 'overwrite',
+                    },
+                  ],
+                },
+                atif: {
+                  enabled: true,
+                  agent_name: 'openclaw',
+                  output_directory: outputDir,
+                  filename_template: 'overlap-{session_id}.json',
+                },
+              },
+            },
+          ],
+        },
+      },
+    });
+    registerPlugin(api, async () => modules);
+    const service = api.calls.services[0];
+    assert.ok(service);
+    const ctx = { stateDir: outputDir, config: {} as never, logger: api.logger };
+    let ending: Promise<void> | undefined;
+    let repeatedEnd: Promise<void> | undefined;
+    let stopping: Promise<void> | undefined;
+    try {
+      await service.start(ctx);
+      const sessionStart = api.calls.hooks.find((hook) => hook.hookName === 'session_start');
+      const sessionEnd = api.calls.hooks.find((hook) => hook.hookName === 'session_end');
+      const gatewayStop = api.calls.hooks.find((hook) => hook.hookName === 'gateway_stop');
+      assert.ok(sessionStart);
+      assert.ok(sessionEnd);
+      assert.ok(gatewayStop);
+      await sessionStart.handler({ sessionId: 'single-session' }, { sessionId: 'single-session' });
+      await gatewayStop.handler({ reason: 'shutdown' }, {});
+      const endEvent = { sessionId: 'single-session', messageCount: 1, reason: 'shutdown' };
+      const endContext = { sessionId: 'single-session' };
+      ending = Promise.resolve(sessionEnd.handler(endEvent, endContext));
+      await entered;
+      repeatedEnd = Promise.resolve(sessionEnd.handler(endEvent, endContext));
+      let stopCompleted = false;
+      stopping = Promise.resolve(service.stop?.(ctx)).then(() => {
+        stopCompleted = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(stopCompleted, false, 'service stop must wait for the pending session close');
+      const pendingStatus = await callGatewayStatus(api.calls.gatewayMethods[0]?.handler);
+      assert.equal(pendingStatus.status.state, 'stopping');
+      assert.equal(pendingStatus.initializedPluginHost, true);
+
+      releaseFlush();
+      await Promise.all([ending, repeatedEnd, stopping]);
+      assert.equal(flushCount, 1, 'overlapping closes must share subscriber delivery');
+      const records = (await fs.readFile(path.join(outputDir, 'events.jsonl'), 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      const starts = records.filter(
+        (record) =>
+          record.kind === 'scope' && record.category === 'agent' && record.scope_category === 'start',
+      );
+      const ends = records.filter(
+        (record) => record.kind === 'scope' && record.category === 'agent' && record.scope_category === 'end',
+      );
+      assert.equal(starts.length, 1);
+      assert.equal(ends.length, 1);
+      assert.equal(ends[0].uuid, starts[0].uuid);
+      assert.equal((await fs.readdir(outputDir)).filter((name) => name.endsWith('.json')).length, 1);
+      const status = await callGatewayStatus(api.calls.gatewayMethods[0]?.handler);
+      assert.equal(status.status.state, 'stopped');
+      assert.equal(status.counters.marksEmitted, 2);
+    } finally {
+      releaseFlush();
+      await Promise.all([ending, repeatedEnd, stopping]);
+      await service.stop?.(ctx);
       await fs.rm(outputDir, { recursive: true, force: true });
     }
   },
