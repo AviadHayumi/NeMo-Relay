@@ -54,7 +54,7 @@ use nemo_relay::codec::request::AnnotatedLlmRequest as AnnotatedLLMRequest;
 use nemo_relay::codec::response::AnnotatedLlmResponse as AnnotatedLLMResponse;
 use nemo_relay::codec::traits::{LlmCodec, LlmResponseCodec};
 
-use crate::convert::{json_to_py, py_to_json};
+use crate::convert::{flow_error_to_py_err, json_to_py, py_to_json};
 use crate::py_types::{
     PyAnnotatedLLMRequest, PyAnnotatedLLMResponse, PyLLMRequest, PyLLMRequestInterceptOutcome,
     PyLlmExecutionContext, PyLlmSanitizeRequestContext, PyLlmSanitizeResponseContext, PyScopeStack,
@@ -75,6 +75,7 @@ fn python_callback_error(error: PyErr) -> FlowError {
     FlowError::CallbackException {
         message: error.to_string(),
         exception_type,
+        source: Some(Arc::new(error)),
     }
 }
 
@@ -617,11 +618,13 @@ async fn resolve_py_tool_execution_intercept_outcome(
 
 fn next_async_iter_coro(async_iter: &Arc<Py<PyAny>>) -> FlowResult<Option<Py<PyAny>>> {
     Python::attach(|py| {
-        py.import("nemo_relay._event_sanitizer_context")
+        let next = py
+            .import("nemo_relay._event_sanitizer_context")
             .and_then(|module| module.getattr("async_iter_next"))
-            .and_then(|next| next.call1((async_iter.bind(py),)))
+            .map_err(|error| FlowError::Internal(error.to_string()))?;
+        next.call1((async_iter.bind(py),))
             .map(|coro| Some(coro.unbind()))
-            .map_err(|error| FlowError::Internal(error.to_string()))
+            .map_err(python_callback_error)
     })
 }
 
@@ -654,7 +657,7 @@ fn cancel_async_iter_task(task: &Py<PyAny>) -> FlowResult<()> {
 enum AsyncIterTaskResult {
     Item(Json),
     End,
-    Cancelled,
+    Cancelled(PyErr),
 }
 
 async fn await_async_iter_task_result(task: Py<PyAny>) -> FlowResult<AsyncIterTaskResult> {
@@ -677,7 +680,7 @@ async fn await_async_iter_task_result(task: Py<PyAny>) -> FlowResult<AsyncIterTa
             if error.is_instance_of::<pyo3::exceptions::PyStopAsyncIteration>(py) {
                 Ok(AsyncIterTaskResult::End)
             } else if error.is_instance(py, &cancelled_error) {
-                Ok(AsyncIterTaskResult::Cancelled)
+                Ok(AsyncIterTaskResult::Cancelled(error))
             } else {
                 Err(python_callback_error(error))
             }
@@ -690,9 +693,7 @@ async fn await_async_iter_task(task: Py<PyAny>) -> FlowResult<Option<Json>> {
     match await_async_iter_task_result(task).await? {
         AsyncIterTaskResult::Item(value) => Ok(Some(value)),
         AsyncIterTaskResult::End => Ok(None),
-        AsyncIterTaskResult::Cancelled => Err(FlowError::Internal(
-            "async iterator task was cancelled".into(),
-        )),
+        AsyncIterTaskResult::Cancelled(error) => Err(python_callback_error(error)),
     }
 }
 
@@ -741,6 +742,21 @@ async fn send_async_iter_value(
     Ok(true)
 }
 
+async fn forward_async_iter_error(
+    error: FlowError,
+    tx: &tokio::sync::mpsc::Sender<FlowResult<Json>>,
+    cancel: &mut tokio::sync::watch::Receiver<bool>,
+    async_iter: &Arc<Py<PyAny>>,
+) -> Option<FlowResult<()>> {
+    Some(
+        match send_async_iter_value(tx, Err(error), cancel, async_iter).await {
+            Ok(true) => close_async_iter(async_iter).await,
+            Ok(false) => Ok(()),
+            Err(error) => Err(error),
+        },
+    )
+}
+
 async fn forward_async_iter_result(
     next_value: FlowResult<AsyncIterTaskResult>,
     tx: &tokio::sync::mpsc::Sender<FlowResult<Json>>,
@@ -756,16 +772,10 @@ async fn forward_async_iter_result(
             }
         }
         Ok(AsyncIterTaskResult::End) => Some(Ok(())),
-        Ok(AsyncIterTaskResult::Cancelled) => Some(close_async_iter(async_iter).await.and(Err(
-            FlowError::Internal("async iterator task was cancelled".into()),
-        ))),
-        Err(error) => Some(
-            match send_async_iter_value(tx, Err(error), cancel, async_iter).await {
-                Ok(true) => close_async_iter(async_iter).await,
-                Ok(false) => Ok(()),
-                Err(error) => Err(error),
-            },
-        ),
+        Ok(AsyncIterTaskResult::Cancelled(error)) => {
+            forward_async_iter_error(python_callback_error(error), tx, cancel, async_iter).await
+        }
+        Err(error) => forward_async_iter_error(error, tx, cancel, async_iter).await,
     }
 }
 
@@ -980,7 +990,7 @@ pub fn wrap_py_tool_conditional_fn(py_fn: Py<PyAny>) -> ToolConditionalFn {
                     }
                     None => callback.bind(py).call1((name, py_args)),
                 }
-                .map_err(|e| FlowError::Internal(e.to_string()))?;
+                .map_err(python_callback_error)?;
                 split_py_object_or_future_with_locals(
                     py,
                     result.unbind(),
@@ -1027,7 +1037,7 @@ pub fn wrap_py_tool_request_intercept_fn(py_fn: Py<PyAny>) -> ToolInterceptFn {
                     }
                     None => callback.bind(py).call1((name, py_args)),
                 }
-                .map_err(|e| FlowError::Internal(e.to_string()))?;
+                .map_err(python_callback_error)?;
                 split_json_or_future_with_locals(py, result.unbind(), task_locals.as_ref())
             }))
             .await
@@ -1115,7 +1125,7 @@ fn isolated_python_continuation_context(
         Some(scope_stack) => context.isolated_with_scope_stack(&scope_stack),
         None => context.isolated(),
     };
-    context.map_err(|error| PyRuntimeError::new_err(error.to_string()))
+    context.map_err(flow_error_to_py_err)
 }
 
 /// Python-callable wrapper for the Rust `ToolExecutionNextFn`.
@@ -1143,7 +1153,7 @@ impl PyToolNextFn {
             let result = context
                 .invoke(move || next(json_args))
                 .await
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+                .map_err(flow_error_to_py_err)?;
             Python::attach(|py| PyToolExecutionResult::from_inner(py, result))
         })
     }
@@ -1166,7 +1176,7 @@ impl PyLlmNextFn {
             let result = context
                 .invoke(move || next(request.inner))
                 .await
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+                .map_err(flow_error_to_py_err)?;
             Python::attach(|py| json_to_py(py, &result))
         })
     }
@@ -1189,7 +1199,7 @@ impl PyLlmStreamNextFn {
             let rust_stream = context
                 .invoke(move || next(request.inner))
                 .await
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+                .map_err(flow_error_to_py_err)?;
 
             // Drain into mpsc channel and return PyLlmStream
             let (tx, rx) = tokio::sync::mpsc::channel::<FlowResult<Json>>(32);
@@ -1352,7 +1362,7 @@ pub fn wrap_py_llm_exec_intercept_fn(py_fn: Py<PyAny>) -> LlmExecutionFn {
                             .bind(py)
                             .call1((&name, py_req, py_context, py_next)),
                     }
-                    .map_err(|e: PyErr| FlowError::Internal(e.to_string()))?;
+                    .map_err(python_callback_error)?;
                     split_py_object_or_future_with_locals(
                         py,
                         result.unbind(),
@@ -1544,7 +1554,7 @@ pub fn wrap_py_llm_conditional_fn(py_fn: Py<PyAny>) -> LlmConditionalFn {
                     Some(context) => context.call_method1("run", (callback.bind(py), request)),
                     None => callback.bind(py).call1((request,)),
                 }
-                .map_err(|e| FlowError::Internal(e.to_string()))?;
+                .map_err(python_callback_error)?;
                 split_py_object_or_future_with_locals(
                     py,
                     result.unbind(),
@@ -1612,9 +1622,7 @@ pub fn wrap_py_llm_request_intercept_fn(py_fn: Py<PyAny>) -> LlmRequestIntercept
                         }
                         None => callback.bind(py).call1((name, py_req, py_ann)),
                     }
-                    .map_err(|e| {
-                        FlowError::Internal(format!("LLM request intercept callable failed: {e}"))
-                    })?;
+                    .map_err(python_callback_error)?;
 
                     split_py_object_or_future_with_locals(
                         py,
