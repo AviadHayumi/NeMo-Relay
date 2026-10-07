@@ -40,13 +40,13 @@ not a moving branch, so future app changes cannot silently change this checkout.
 | Relay lifecycle and optional tool-rewrite fixes | `crates/cli/` and `integrations/coding-agents/claude-code/` |
 | Real task runner, regression report and sanitized measurements | [Relay experiments](scripts/relay-completion-check/README.md) |
 | Latest matching Relay source hashes and test results | [Core validation](scripts/relay-completion-check/CORE-VALIDATION.md) |
-| Dashboard, launcher and Kubernetes packaging | [Fleet application](https://github.com/AviadHayumi/idle-example-cc/blob/0501137510665abc639e8f015f8844ea51b35e1c/README.md) |
-| What is actually deployed, its hashes, and real task results | [7 October cluster rollout](https://github.com/AviadHayumi/idle-example-cc/blob/0501137510665abc639e8f015f8844ea51b35e1c/deploy/kubernetes/relay-only-release-20261007/README.md) |
+| Dashboard, launcher and Kubernetes packaging | [Fleet application](https://github.com/AviadHayumi/idle-example-cc/blob/4da0c3b88c954da4e503e682d548cf88986764e9/README.md) |
+| What is actually deployed, its hashes, and real task results | [7 October cluster rollout](https://github.com/AviadHayumi/idle-example-cc/blob/4da0c3b88c954da4e503e682d548cf88986764e9/deploy/kubernetes/relay-ack-fix-20261007/README.md) |
 | Our native Rust plugin loaded inside Relay | `examples/idle-fleet/relay_activity_plugin/` |
 | Rust helper that owns launched child processes | `examples/idle-fleet/managed_exec/` |
-| Simple explanation of plugins and restart recovery | [Recovery walkthrough](https://github.com/AviadHayumi/idle-example-cc/blob/0501137510665abc639e8f015f8844ea51b35e1c/docs/relay-plugin-recovery.md) |
-| Fixed problems, open gaps and proposed solutions | [Bug inventory](https://github.com/AviadHayumi/idle-example-cc/blob/0501137510665abc639e8f015f8844ea51b35e1c/docs/relay-only-bug-inventory.md) |
-| Calculator story with rendered sequence diagrams | [Visual walkthrough](https://github.com/AviadHayumi/idle-example-cc/blob/0501137510665abc639e8f015f8844ea51b35e1c/docs/calculator-relay-stories/design.md) |
+| Simple explanation of plugins and restart recovery | [Recovery walkthrough](https://github.com/AviadHayumi/idle-example-cc/blob/4da0c3b88c954da4e503e682d548cf88986764e9/docs/relay-plugin-recovery.md) |
+| Fixed problems, open gaps and proposed solutions | [Bug inventory](https://github.com/AviadHayumi/idle-example-cc/blob/4da0c3b88c954da4e503e682d548cf88986764e9/docs/relay-only-bug-inventory.md) |
+| Calculator story with rendered sequence diagrams | [Visual walkthrough](https://github.com/AviadHayumi/idle-example-cc/blob/4da0c3b88c954da4e503e682d548cf88986764e9/docs/calculator-relay-stories/design.md) |
 | Older research, alternative architectures and multi-harness work | `examples/idle-fleet/suggestions/` and `examples/idle-fleet/docs/` |
 
 The optional tool-input rewrite bridge is included because it was part of the
@@ -60,15 +60,24 @@ Relay's latest combined source matches the saved 16-file hash record: 5,384 Rust
 tests passed, with one documented flaky retry. The earlier lifecycle-only build
 has its own 5,378-test record and different binary hash. Keep those stages separate.
 
-The app's latest recorded checks include 35 plugin tests, 15 sender tests,
-15 Linux ownership cases, four actual Relay restart cases, 712 application tests
-collected with 708 passing and four platform skips, and 104 frontend tests.
+The app's receipt fix passed 43 plugin tests, four actual Relay restart cases
+and 111 frontend tests. The later heartbeat, snapshot-flood and SSE delivery
+fixes ran an application suite of 729 tests: 725 passed and four platform cases
+were skipped. The unchanged
+sender/helper retain their earlier 15 sender tests and 15 Linux ownership cases.
 The restart fault tests used real commands and a real Relay daemon, but no model
-or Claude invocation. Separately, the live Fleet rollout used real Claude model
+or Claude invocation. The earlier live Fleet rollout used real Claude model
 requests, a reviewer subagent and 24 calculator tests. A detached-child follow-up
 stayed Running in all 11 sampled post-Claude-exit observations until the child
 ended, then showed scoped readiness. These are bounded checks, not a guarantee
 that every activity path is covered.
+
+The receipt and UI follow-up completed nine real Claude invocations across three
+canary sessions. The initial calculators passed 73 independently rerun tests.
+The final browser check recorded 215 samples with no browser-only evidence
+expiration and no flicker in the three pre-existing idle sessions. Completion
+briefly remained Unknown until a fresh Relay challenge confirmed the result.
+The live report preserves the intermediate delivery failure and its SSE fix.
 
 The [publication checks](scripts/relay-completion-check/evidence/publication-checks.json)
 record staged hygiene/type/link checks and both Rust workspace checks from the
@@ -88,8 +97,10 @@ Whole-sandbox coverage, lost native-hook reconciliation, durable response replay
 and real Substrate checkpoint/restore remain open. Relay state currently uses
 `emptyDir`, so same-Pod daemon recovery is not Pod replacement recovery. Fleet
 controller upgrades also stop active workers under its current shutdown policy.
-The report preserves the rollout's initial Unknown result, its scoped projection
-fix, and the remaining native event identity and restart-readiness gaps.
+The newer report records the delayed receipt fix, separate activity and evidence
+indicators, recovered readiness after a no-prompt restart, and the redundant
+token-snapshot flood found during live validation. Native event identity remains
+an open gap; old corruption history is not erased.
 
 ## Upstream and private configuration
 
