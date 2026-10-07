@@ -9,21 +9,22 @@ This development repository keeps our NeMo Relay changes and the exact Fleet
 application used to investigate agent activity. It is based on NVIDIA's commit
 `db4c6c520d66f15acf28b21be179a6d576254a1b`.
 
-This repository is private. GitHub cannot make a native fork of a public
-repository private, so it is a standalone copy with NVIDIA retained as upstream.
+This repository is a public fork of `NVIDIA/NeMo-Relay`.
 The working branch is `codex/relay-only-lifecycle`. This is experimental work,
 not an NVIDIA release and not a claim that safe sandbox suspension is solved.
 
 ## Get the complete project
 
 ```sh
-git clone --recurse-submodules https://github.com/AviadHayumi/NeMo-Relay.git
+git clone https://github.com/AviadHayumi/NeMo-Relay.git
 cd NeMo-Relay
 ```
 
-The `examples/idle-fleet` submodule points to an exact commit in the private
-`AviadHayumi/idle-example-cc` repository. Your GitHub account needs access to
-that repository. For an existing checkout, run:
+The Relay code, tests and experiment reports are public. The
+`examples/idle-fleet` submodule still points to an exact commit in the private
+`AviadHayumi/idle-example-cc` repository. Making this Relay fork public does not
+publish the Fleet app. To also download the app, your GitHub account needs access
+to that repository. Then run:
 
 ```sh
 git submodule update --init --recursive
@@ -65,7 +66,9 @@ commands and a real Relay daemon, but no model or Claude invocation. See the
 linked reports for the complete evidence and limits.
 
 The [publication checks](scripts/relay-completion-check/evidence/publication-checks.json)
-record staged hygiene/type/link checks and both Rust workspace checks. Rust
+record staged hygiene/type/link checks and both Rust workspace checks from the
+initial private publication. This fork was subsequently made public; the saved
+check record describes that earlier stage. Rust
 checks ran on Linux with Rust 1.96.1 because the local 1.91.1 compiler rejects
 newer syntax already present upstream.
 
