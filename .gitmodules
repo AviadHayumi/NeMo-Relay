@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[submodule "experiments/idle-fleet"]
+	path = examples/idle-fleet
+	url = https://github.com/AviadHayumi/idle-example-cc.git
+	branch = codex/relay-only

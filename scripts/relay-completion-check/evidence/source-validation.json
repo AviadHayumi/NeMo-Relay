@@ -1,0 +1,29 @@
+{
+  "base_revision": "db4c6c520d66f15acf28b21be179a6d576254a1b",
+  "changes": "Working-tree patch, not committed or published upstream",
+  "rust_version": "1.96.1",
+  "final_binary_sha256": "db3295a74c7cf73c5fd7e9160d26d5bfc73989d54da7f9f9a79dc66722dcb9e9",
+  "canonical_command": "just test-rust",
+  "canonical_result": {
+    "workspace_passed": 5335,
+    "native_plugin_passed": 10,
+    "grpc_plugin_passed": 13,
+    "binding_plugin_passed": 20,
+    "total_passed": 5378,
+    "skipped": 0,
+    "retries": 0
+  },
+  "clippy_command": "cargo clippy -p nemo-relay-cli --all-targets -- -D warnings",
+  "clippy_result": "passed",
+  "format_command": "cargo fmt --all -- --check",
+  "format_result": "passed",
+  "test_environment": "Isolated Linux amd64 Kubernetes builder, verified Tini 0.19.0 subreaper",
+  "source_sha256": {
+    "crates/cli/src/agents/claude/adapter.rs": "3dd54b0a14fbf088bec423d024ca7f10af9d88e03105f89af538111be79a8703",
+    "crates/cli/src/agents/claude/mod.rs": "e03bacbce0f813c9c6d9164c4ffe99432e5f79d3d7cc9f7b54502f6b205c7950",
+    "crates/cli/src/agents/codex/adapter.rs": "0cbe9724edb011f7fe166b313fe241063e43121e474f87def4e9aae90b680de7",
+    "crates/cli/src/sessions/mod.rs": "0fe423c3058af07891a7443f2575066866f2635c7e98c01fbd230b2fc3caa7f7",
+    "integrations/coding-agents/claude-code/hooks/hooks.json": "36ac8e16e3d3b27f080030389e42a9db9cbc366fd983a18bb2c3adbae38052f8"
+  },
+  "logs_directory": "artifacts/relay-completion-check/20261007 (local, ignored by Git)"
+}

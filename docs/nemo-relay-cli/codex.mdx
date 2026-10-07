@@ -34,6 +34,20 @@ hooks can still require review. This behavior is tracked upstream as
 
 ## Multi-Agent Delegation Traces
 
+Some Codex hook versions use the same `session_id` for a parent and its child
+threads. In those hooks, `agent_id` identifies the thread. Relay keeps a child's
+`UserPromptSubmit` inside the parent's existing turn and applies a child's `Stop`
+to that child's scope. Starting or finishing a child therefore does not close the
+parent's tools or its other children. Relay requires both native identifiers to
+be present and different before treating a turn boundary as a child's; a Relay
+session-header override alone does not establish child ownership.
+An unmatched `SubagentStop` received while no parent turn is open is logged and
+does not create a new turn. An unmatched stop during an active turn remains a
+diagnostic mark.
+
+These are hook lifecycle boundaries. A completed tool scope does not establish
+that a background process launched by the tool has exited.
+
 In Codex multi-agent v2, the Responses service encrypts the `message` argument
 for `spawn_agent`, `send_message`, and `followup_task`. The parent response
 contains ciphertext in the tool call. Codex stores that value as

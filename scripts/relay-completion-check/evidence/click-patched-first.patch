@@ -1,0 +1,71 @@
+diff --git a/src/click/formatting.py b/src/click/formatting.py
+index 0b64f83..0483063 100644
+--- a/src/click/formatting.py
++++ b/src/click/formatting.py
+@@ -61,6 +61,7 @@ def wrap_text(
+         initial_indent=initial_indent,
+         subsequent_indent=subsequent_indent,
+         replace_whitespace=False,
++        break_on_hyphens=False,
+     )
+     if not preserve_paragraphs:
+         return wrapper.fill(text)
+diff --git a/tests/test_formatting.py b/tests/test_formatting.py
+index c79f657..1416f1f 100644
+--- a/tests/test_formatting.py
++++ b/tests/test_formatting.py
+@@ -366,3 +366,54 @@ def test_help_formatter_write_text():
+     actual = formatter.getvalue()
+     expected = "  Lorem ipsum dolor sit amet,\n  consectetur adipiscing elit\n"
+     assert actual == expected
++
++
++def test_write_usage_no_split_on_hyphen():
++    """Hyphenated option names must not be split at their hyphens.
++
++    Regression test for https://github.com/pallets/click/issues/3362.
++
++    With break_on_hyphens=True (the bug), textwrap treats hyphens inside
++    '--max-retry-count' as valid line-break points. When previous args fill
++    the line to where '--max-retry-' (12 chars) fits but '--max-retry-count'
++    (17 chars) does not, the option name is split as '--max-retry-' on one
++    line and 'count VALUE' on the next.
++
++    The fix sets break_on_hyphens=False so the token '--max-retry-count' is
++    treated as a single word: it wraps whole to the next line.
++    """
++    # width=65 matches the issue title; 36 padding chars put --max-retry-count
++    # right at the boundary where break_on_hyphens=True causes a hyphen split.
++    formatter = click.HelpFormatter(width=65)
++    padding = "A" * 36  # fills line so '--max-retry-' (12) fits but '--max-retry-count' (17) doesn't
++    formatter.write_usage("prog", f"{padding} --max-retry-count VALUE")
++    output = formatter.getvalue()
++
++    # The option name must appear as a complete token on some line.
++    assert "--max-retry-count" in output, (
++        f"Option name was split at a hyphen:\n{output!r}"
++    )
++    # No line should end with '--max-retry-' (the hyphen-split fragment).
++    for line in output.splitlines():
++        assert not line.rstrip().endswith("--max-retry-"), (
++            f"Option name broken at hyphen boundary:\n{output!r}"
++        )
++
++
++def test_write_usage_no_split_on_hyphen_various_widths():
++    """Hyphenated option names stay intact at widths 24-27.
++
++    At these widths the option '--max-retry-count' does not fit on the
++    current continuation line but break_on_hyphens=True (the bug) would
++    split it as '--max-retry-\\ncount VALUE'. The fix avoids the hyphen
++    split; the option either overflows or wraps at a non-hyphen character
++    position, but never as '--max-retry-' followed by 'count …'.
++    """
++    for width in (24, 25, 26, 27):
++        formatter = click.HelpFormatter(width=width)
++        formatter.write_usage("prog", "--max-retry-count VALUE")
++        output = formatter.getvalue()
++        # Bug fingerprint: a line ending with '--max-retry-' (hyphen split).
++        assert "--max-retry-\n" not in output, (
++            f"Option name split at hyphen for width={width}:\n{output!r}"
++        )

@@ -6390,3 +6390,6 @@ async fn a_named_upstream_redirect_is_not_followed() {
 
     redirector.abort();
 }
+
+#[path = "claude_transform_tests.rs"]
+mod claude_transform_tests;

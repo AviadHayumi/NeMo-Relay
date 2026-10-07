@@ -1,0 +1,96 @@
+{
+  "tag": {
+    "command": [
+      "git",
+      "describe",
+      "--tags",
+      "--exact-match"
+    ],
+    "cwd": "/workspace/patched-click",
+    "exit_code": 0,
+    "stdout": "8.3.1\n",
+    "stderr": ""
+  },
+  "commit": {
+    "command": [
+      "git",
+      "rev-parse",
+      "HEAD"
+    ],
+    "cwd": "/workspace/patched-click",
+    "exit_code": 0,
+    "stdout": "1d038f270701498433cb432f54db89f95f07a845\n",
+    "stderr": ""
+  },
+  "changed_files": {
+    "command": [
+      "git",
+      "diff",
+      "--name-only"
+    ],
+    "cwd": "/workspace/patched-click",
+    "exit_code": 0,
+    "stdout": "src/click/formatting.py\ntests/test_formatting.py\n",
+    "stderr": ""
+  },
+  "fixed_focused": {
+    "command": [
+      "python3",
+      "-m",
+      "pytest",
+      "tests/test_formatting.py",
+      "-q"
+    ],
+    "cwd": "/workspace/patched-click",
+    "exit_code": 0,
+    "stdout": ".....................                                                    [100%]\n21 passed in 0.05s\n",
+    "stderr": ""
+  },
+  "original_with_new_tests": {
+    "command": [
+      "python3",
+      "-m",
+      "pytest",
+      "tests/test_formatting.py",
+      "-q"
+    ],
+    "cwd": "/workspace/patched-click-final-original-independent",
+    "exit_code": 1,
+    "stdout": ".................F.F.                                                    [100%]\n=================================== FAILURES ===================================\n_____________________ test_write_usage_no_split_on_hyphen ______________________\n\n    def test_write_usage_no_split_on_hyphen():\n        \"\"\"Hyphenated option names are not split at hyphens in write_usage.\n    \n        Regression for https://github.com/pallets/click/issues/3362.\n    \n        With break_on_hyphens=True (the bug), textwrap treats each ``\\\\w-\\\\w``\n        sequence as a valid line-break point.  When padding fills the first\n        line to where '--max-retry-' (12 chars) fits but '--max-retry-count'\n        (17 chars) does not, the option name is split as '--max-retry-' / 'count VALUE'.\n    \n        The fix passes break_on_hyphens=False to wrap_text inside write_usage\n        so the full token '--max-retry-count' wraps as a unit to the next line.\n    \n        Overflow policy: when the option token is longer than the available column\n        (after the continuation indent), character-level breaking still occurs\n        because there is no space to fit the whole token.  The fix only prevents\n        the hyphen-logic split; it does not override the overflow fallback.\n        \"\"\"\n        # width=65 matches the issue title.  36 'A' chars fill the first line\n        # to where '--max-retry-' (12) fits but '--max-retry-count' (17) does not.\n        formatter = click.HelpFormatter(width=65)\n        padding = \"A\" * 36\n        formatter.write_usage(\"prog\", f\"{padding} --max-retry-count VALUE\")\n        output = formatter.getvalue()\n    \n        # Option name must appear as a complete token on some line.\n>       assert \"--max-retry-count\" in output, (\n            f\"Option name was split at a hyphen:\\n{output!r}\"\n        )\nE       AssertionError: Option name was split at a hyphen:\nE         'Usage: prog AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA --max-retry-\\n            count VALUE\\n'\nE       assert '--max-retry-count' in 'Usage: prog AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA --max-retry-\\n            count VALUE\\n'\n\ntests/test_formatting.py:397: AssertionError\n______________ test_write_usage_no_split_on_hyphen_various_widths ______________\n\n    def test_write_usage_no_split_on_hyphen_various_widths():\n        \"\"\"Hyphen-split fingerprint absent at widths 24-27 after the fix.\n    \n        At widths 24-27 the continuation indent is 11 chars, leaving 13-16 chars.\n        '--max-retry-count' (17 chars) is longer than the available space so it\n        will be character-broken regardless.  But the hyphen-split pattern\n        '--max-retry-\\\\n' (where the token is cut exactly at its final hyphen by\n        break_on_hyphens=True logic) must NOT appear after the fix.\n        \"\"\"\n        for width in (24, 25, 26, 27):\n            formatter = click.HelpFormatter(width=width)\n            formatter.write_usage(\"prog\", \"--max-retry-count VALUE\")\n            output = formatter.getvalue()\n            # Bug fingerprint: '--max-retry-' ending a line (hyphen-logic split).\n>           assert \"--max-retry-\\n\" not in output, (\n                f\"Option name split at hyphen for width={width}:\\n{output!r}\"\n            )\nE           AssertionError: Option name split at hyphen for width=24:\nE             'Usage: prog \\n           --max-retry-\\n           count VALUE\\n'\nE           assert '--max-retry-\\n' not in 'Usage: prog...ount VALUE\\n'\nE             \nE             '--max-retry-\\n' is contained here:\nE               Usage: prog \nE                          --max-retry-\nE             ? -----------\nE                          count VALUE\n\ntests/test_formatting.py:441: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_formatting.py::test_write_usage_no_split_on_hyphen - Assert...\nFAILED tests/test_formatting.py::test_write_usage_no_split_on_hyphen_various_widths\n2 failed, 19 passed in 0.07s\n",
+    "stderr": ""
+  },
+  "fixed_full_suite": {
+    "command": [
+      "python3",
+      "-m",
+      "pytest",
+      "tests/",
+      "-q",
+      "-W",
+      "ignore::pytest.PytestRemovedIn10Warning"
+    ],
+    "cwd": "/workspace/patched-click",
+    "exit_code": 0,
+    "stdout": "........................................................................ [  5%]\n........................................................................ [ 10%]\n..................................................x..................... [ 16%]\n........................................................................ [ 21%]\n........................................................................ [ 26%]\n........................................................................ [ 32%]\n........................................................................ [ 37%]\n........................................................................ [ 42%]\n........................................................................ [ 48%]\n........................................................................ [ 53%]\n........................................................................ [ 59%]\n........................................................................ [ 64%]\n........................................................................ [ 69%]\n.......................................................................s [ 75%]\nssssssssssssssssssss.................................................... [ 80%]\n........................................................................ [ 85%]\n........................................................................ [ 91%]\n........................................................................ [ 96%]\n............................................                             [100%]\n1318 passed, 21 skipped, 1 xfailed in 2.60s\n",
+    "stderr": ""
+  },
+  "prose_comparison": {
+    "valid": true,
+    "cases": 72,
+    "identical_to_original_tag": true,
+    "widths": [
+      15,
+      20,
+      32,
+      50,
+      65,
+      80
+    ],
+    "methods": [
+      "wrap_text",
+      "write_text",
+      "write_dl"
+    ]
+  },
+  "qualification": "Real task artifacts, independently tested after resumed Claude invocation. Usage-only hyphen behavior is checked; arbitrarily narrow widths still permit character-level wrapping. No upstream submission."
+}

@@ -24,7 +24,8 @@ the payload in a shared gateway envelope.
   hook response object.
 - `POST /hooks/claude-code` accepts Claude Code hook JSON and returns
   Claude-compatible fields such as `continue` and permission decisions when the
-  hook event supports them.
+  hook event supports them. A `PreToolUse` request intercept returns its complete
+  rewritten input in `hookSpecificOutput.updatedInput`, without granting permission.
 - `POST /hooks/pi` accepts the hook JSON posted by the NeMo Relay pi extension.
   It returns an empty object for an allowed call, or
   `{"tool_call": {"tool_call_id": "…", "input": {…}}}` when a request intercept

@@ -1,0 +1,22 @@
+{
+  "fixed": {
+    "exit_code": 0,
+    "stdout": "....................                                                     [100%]\n20 passed in 0.05s\n",
+    "stderr": ""
+  },
+  "original": {
+    "exit_code": 1,
+    "stdout": ".................F..                                                     [100%]\n=================================== FAILURES ===================================\n______________________ test_wrap_text_no_break_on_hyphens ______________________\n\n    def test_wrap_text_no_break_on_hyphens():\n        \"\"\"Option names with hyphens (e.g. --max-retry-count) must not be\n        split at a hyphen when wrapping. GH-3362.\"\"\"\n        # width=13 triggers the bug: break_on_hyphens=True produces\n        # '--max-retry-\\ncount' (split at the hyphen before 'count').\n        # With the fix, the break happens at a character boundary instead.\n        result = click.wrap_text(\"--max-retry-count\", width=13)\n        for line in result.splitlines():\n>           assert not line.rstrip().endswith(\"-\"), (\n                f\"Token was split at a hyphen: {result!r}\"\n            )\nE           AssertionError: Token was split at a hyphen: '--max-retry-\\ncount'\nE           assert not True\nE            +  where True = <built-in method endswith of str object at 0x7bcad3cb8830>('-')\nE            +    where <built-in method endswith of str object at 0x7bcad3cb8830> = '--max-retry-'.endswith\nE            +      where '--max-retry-' = <built-in method rstrip of str object at 0x7bcad3cb8830>()\nE            +        where <built-in method rstrip of str object at 0x7bcad3cb8830> = '--max-retry-'.rstrip\n\ntests/test_formatting.py:379: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_formatting.py::test_wrap_text_no_break_on_hyphens - Asserti...\n1 failed, 19 passed in 0.07s\n",
+    "stderr": ""
+  },
+  "source_tag": "8.3.1",
+  "source_commit": "1d038f270701498433cb432f54db89f95f07a845",
+  "command": [
+    "python3",
+    "-m",
+    "pytest",
+    "tests/test_formatting.py",
+    "-q"
+  ],
+  "setup_note": "The task installed pytest in its isolated HOME user site; independent checks used that HOME and explicit source PYTHONPATH. A prior wrong-HOME check was inconclusive and retained only in raw logs."
+}

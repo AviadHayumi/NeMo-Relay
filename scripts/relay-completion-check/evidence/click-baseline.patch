@@ -1,0 +1,58 @@
+diff --git a/src/click/formatting.py b/src/click/formatting.py
+index 0b64f83..0483063 100644
+--- a/src/click/formatting.py
++++ b/src/click/formatting.py
+@@ -61,6 +61,7 @@ def wrap_text(
+         initial_indent=initial_indent,
+         subsequent_indent=subsequent_indent,
+         replace_whitespace=False,
++        break_on_hyphens=False,
+     )
+     if not preserve_paragraphs:
+         return wrapper.fill(text)
+diff --git a/tests/test_formatting.py b/tests/test_formatting.py
+index c79f657..dfe429f 100644
+--- a/tests/test_formatting.py
++++ b/tests/test_formatting.py
+@@ -366,3 +366,41 @@ def test_help_formatter_write_text():
+     actual = formatter.getvalue()
+     expected = "  Lorem ipsum dolor sit amet,\n  consectetur adipiscing elit\n"
+     assert actual == expected
++
++
++def test_wrap_text_no_break_on_hyphens():
++    """Option names with hyphens (e.g. --max-retry-count) must not be
++    split at a hyphen when wrapping. GH-3362."""
++    # width=13 triggers the bug: break_on_hyphens=True produces
++    # '--max-retry-\ncount' (split at the hyphen before 'count').
++    # With the fix, the break happens at a character boundary instead.
++    result = click.wrap_text("--max-retry-count", width=13)
++    for line in result.splitlines():
++        assert not line.rstrip().endswith("-"), (
++            f"Token was split at a hyphen: {result!r}"
++        )
++
++
++def test_write_usage_no_break_on_hyphens():
++    """write_usage must not split hyphenated option tokens across lines. GH-3362."""
++    formatter = click.HelpFormatter(width=65)
++    formatter.write_usage(
++        "prog",
++        "--max-retry-count VALUE --another-hyphenated-option VALUE",
++    )
++    output = formatter.getvalue()
++    # No token should be split: every line-broken fragment must not end with '-'
++    for line in output.splitlines():
++        assert not line.rstrip().endswith("-"), (
++            f"Line ends with hyphen (token was split): {line!r}\nFull output: {output!r}"
++        )
++
++
++def test_wrap_text_still_wraps_prose():
++    """Normal prose wrapping must still work after the break_on_hyphens fix."""
++    long_sentence = "The quick brown fox jumps over the lazy dog " * 3
++    result = click.wrap_text(long_sentence.strip(), width=40)
++    lines = result.splitlines()
++    for line in lines:
++        assert len(line) <= 40, f"Line too long: {line!r}"
++    assert len(lines) > 1

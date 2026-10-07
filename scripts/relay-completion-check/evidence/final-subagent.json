@@ -1,0 +1,1327 @@
+{
+  "scope": "Live stock CLI + Relay; no Fleet observer or suspension test",
+  "tolerances": {
+    "early_seconds": 0.05,
+    "late_seconds": 1
+  },
+  "interpretation": "A closed tool scope means that tool boundary closed. It does not by itself establish whole-sandbox completion.",
+  "harnesses": [
+    {
+      "harness": "claude",
+      "versions": {
+        "harness": "claude",
+        "cli": "2.1.280 (Claude Code)",
+        "relay": "nemo-relay 0.10.0",
+        "relay_binary_sha256": "db3295a74c7cf73c5fd7e9160d26d5bfc73989d54da7f9f9a79dc66722dcb9e9"
+      },
+      "raw_atof_event_count": 394,
+      "cases": [
+        {
+          "case": "final-background-subagent",
+          "invocation": {
+            "harness": "claude",
+            "case": "subagent",
+            "started_wall_ns": 1791379586068569488,
+            "ended_wall_ns": 1791379622556377754,
+            "exit_code": 0,
+            "timed_out": false,
+            "test_only_process_trace": true,
+            "process_group": 143,
+            "relay_binary_sha256": "db3295a74c7cf73c5fd7e9160d26d5bfc73989d54da7f9f9a79dc66722dcb9e9"
+          },
+          "native_hook_counts": {
+            "SessionStart": 1,
+            "UserPromptSubmit": 2,
+            "PreToolUse": 3,
+            "SubagentStart": 1,
+            "PostToolUse": 3,
+            "Stop": 2,
+            "SubagentStop": 1,
+            "SessionEnd": 1
+          },
+          "hook_deliveries": 14,
+          "hook_failures": 0,
+          "cli_results": [
+            {
+              "subtype": "success",
+              "is_error": false,
+              "num_turns": 3
+            },
+            {
+              "subtype": "success",
+              "is_error": false,
+              "num_turns": 1
+            }
+          ],
+          "witness_operations": [
+            "child",
+            "parent"
+          ],
+          "witness_complete": true,
+          "native_subagent_exercised": true,
+          "tools": [
+            {
+              "native_start_wall_ns": 1791379594492777409,
+              "native_end_wall_ns": 1791379594687441404,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791379594789511936,
+              "end_minus_native_end_seconds": 0.102070532,
+              "relay_end_reason": "async_launched",
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "toolu_bdrk_01WjLP6JLk7EL1nn8Nh937Z1",
+              "tool_name": "Agent",
+              "agent_id": null
+            },
+            {
+              "native_start_wall_ns": 1791379596845716787,
+              "native_end_wall_ns": 1791379605252429793,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791379605364009984,
+              "end_minus_native_end_seconds": 0.111580191,
+              "relay_end_reason": null,
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "toolu_bdrk_01YbiEaqDuepg7UAYNvqnqhK",
+              "tool_name": "Bash",
+              "agent_id": null,
+              "test_command": "python3 /configuration/oracle.py --operation parent --seconds 8",
+              "oracle_end_wall_ns": 1791379605162525305,
+              "oracle_cpu_seconds": 7.933686806,
+              "relay_end_minus_work_end_seconds": 0.201484679,
+              "intentionally_detached": false
+            },
+            {
+              "native_start_wall_ns": 1791379598349704393,
+              "native_end_wall_ns": 1791379618687958343,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791379618783063808,
+              "end_minus_native_end_seconds": 0.095105465,
+              "relay_end_reason": null,
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "toolu_bdrk_01Dd7eBz7XYxxhLsj9sf7mRR",
+              "tool_name": "Bash",
+              "agent_id": "a3559e9e9f91f2806",
+              "test_command": "python3 /configuration/oracle.py --operation child --seconds 20",
+              "oracle_end_wall_ns": 1791379618604881965,
+              "oracle_cpu_seconds": 19.944502358,
+              "relay_end_minus_work_end_seconds": 0.178181843,
+              "intentionally_detached": false
+            }
+          ],
+          "subagents": [
+            {
+              "agent_id": "a3559e9e9f91f2806",
+              "native_start_wall_ns": 1791379594682563715,
+              "native_end_wall_ns": 1791379620413962687,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791379620510941952,
+              "end_minus_native_end_seconds": 0.096979265,
+              "relay_end_reason": null,
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false
+            }
+          ],
+          "setup_valid": true,
+          "process_trace": {
+            "trace_files": 107,
+            "terminal_events": 107,
+            "executed_processes": [
+              {
+                "pid": "146",
+                "executables": [
+                  "claude"
+                ],
+                "first_trace_wall_seconds": 1791379586.077008,
+                "end_wall_seconds": 1791379622.540795,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "153",
+                "executables": [
+                  "git"
+                ],
+                "first_trace_wall_seconds": 1791379586.42234,
+                "end_wall_seconds": 1791379586.426408,
+                "terminal_event": "+++ exited with 128 +++"
+              },
+              {
+                "pid": "154",
+                "executables": [
+                  "git"
+                ],
+                "first_trace_wall_seconds": 1791379586.438693,
+                "end_wall_seconds": 1791379586.443784,
+                "terminal_event": "+++ exited with 128 +++"
+              },
+              {
+                "pid": "155",
+                "executables": [
+                  "git"
+                ],
+                "first_trace_wall_seconds": 1791379586.460332,
+                "end_wall_seconds": 1791379586.464669,
+                "terminal_event": "+++ exited with 128 +++"
+              },
+              {
+                "pid": "156",
+                "executables": [
+                  "2.1.280"
+                ],
+                "first_trace_wall_seconds": 1791379586.511575,
+                "end_wall_seconds": 1791379586.517494,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "157",
+                "executables": [
+                  "2.1.280"
+                ],
+                "first_trace_wall_seconds": 1791379586.514865,
+                "end_wall_seconds": 1791379586.521513,
+                "terminal_event": "+++ exited with 2 +++"
+              },
+              {
+                "pid": "158",
+                "executables": [
+                  "2.1.280"
+                ],
+                "first_trace_wall_seconds": 1791379586.520678,
+                "end_wall_seconds": 1791379586.530255,
+                "terminal_event": "+++ exited with 1 +++"
+              },
+              {
+                "pid": "163",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379586.553089,
+                "end_wall_seconds": 1791379586.717871,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "164",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379586.556,
+                "end_wall_seconds": 1791379586.717539,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "166",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379586.612963,
+                "end_wall_seconds": 1791379586.709361,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "169",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379586.778957,
+                "end_wall_seconds": 1791379586.943168,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "170",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379586.782226,
+                "end_wall_seconds": 1791379586.942817,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "171",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379586.837101,
+                "end_wall_seconds": 1791379586.933834,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "175",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379594.434143,
+                "end_wall_seconds": 1791379594.606097,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "176",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379594.43731,
+                "end_wall_seconds": 1791379594.605696,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "177",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379594.49611,
+                "end_wall_seconds": 1791379594.596628,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "180",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379594.622429,
+                "end_wall_seconds": 1791379594.793507,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "181",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379594.626344,
+                "end_wall_seconds": 1791379594.8019,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "182",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379594.625097,
+                "end_wall_seconds": 1791379594.792294,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "183",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379594.62953,
+                "end_wall_seconds": 1791379594.801501,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "184",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379594.685899,
+                "end_wall_seconds": 1791379594.782687,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "185",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379594.690503,
+                "end_wall_seconds": 1791379594.793124,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "190",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379596.79127,
+                "end_wall_seconds": 1791379596.954254,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "191",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379596.794355,
+                "end_wall_seconds": 1791379596.953897,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "192",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379596.84881,
+                "end_wall_seconds": 1791379596.945354,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "199",
+                "executables": [
+                  "bash",
+                  "env"
+                ],
+                "first_trace_wall_seconds": 1791379596.991551,
+                "end_wall_seconds": 1791379597.006046,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "200",
+                "executables": [
+                  "bash"
+                ],
+                "first_trace_wall_seconds": 1791379596.996554,
+                "end_wall_seconds": 1791379597.047837,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "201",
+                "executables": [
+                  "run-parts"
+                ],
+                "first_trace_wall_seconds": 1791379597.002766,
+                "end_wall_seconds": 1791379597.005505,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "202",
+                "executables": [
+                  "locale-check"
+                ],
+                "first_trace_wall_seconds": 1791379597.007333,
+                "end_wall_seconds": 1791379597.00966,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "203",
+                "executables": [
+                  "cat"
+                ],
+                "first_trace_wall_seconds": 1791379597.014283,
+                "end_wall_seconds": 1791379597.021342,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "204",
+                "executables": [
+                  "cat"
+                ],
+                "first_trace_wall_seconds": 1791379597.023196,
+                "end_wall_seconds": 1791379597.03027,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "205",
+                "executables": [
+                  "cat"
+                ],
+                "first_trace_wall_seconds": 1791379597.031799,
+                "end_wall_seconds": 1791379597.038872,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "206",
+                "executables": [
+                  "cat"
+                ],
+                "first_trace_wall_seconds": 1791379597.040029,
+                "end_wall_seconds": 1791379597.047265,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "207",
+                "executables": [
+                  "bash"
+                ],
+                "first_trace_wall_seconds": 1791379597.054366,
+                "end_wall_seconds": 1791379605.178433,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "209",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379597.06632,
+                "end_wall_seconds": 1791379605.17719,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "210",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379598.273626,
+                "end_wall_seconds": 1791379598.482861,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "211",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379598.278657,
+                "end_wall_seconds": 1791379598.482504,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "212",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379598.37179,
+                "end_wall_seconds": 1791379598.474991,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "215",
+                "executables": [
+                  "bash"
+                ],
+                "first_trace_wall_seconds": 1791379598.500576,
+                "end_wall_seconds": 1791379618.619969,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "217",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379598.511902,
+                "end_wall_seconds": 1791379618.618755,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "218",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379605.19427,
+                "end_wall_seconds": 1791379605.376088,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "219",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379605.197361,
+                "end_wall_seconds": 1791379605.375715,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "220",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379605.255583,
+                "end_wall_seconds": 1791379605.367143,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "223",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379607.556982,
+                "end_wall_seconds": 1791379607.72388,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "224",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379607.559792,
+                "end_wall_seconds": 1791379607.723512,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "225",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379607.615753,
+                "end_wall_seconds": 1791379607.715888,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "228",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379618.630595,
+                "end_wall_seconds": 1791379618.795469,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "229",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379618.633478,
+                "end_wall_seconds": 1791379618.795123,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "230",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379618.69119,
+                "end_wall_seconds": 1791379618.785825,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "233",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379620.357255,
+                "end_wall_seconds": 1791379620.523106,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "234",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379620.36095,
+                "end_wall_seconds": 1791379620.52279,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "235",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379620.417083,
+                "end_wall_seconds": 1791379620.515384,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "238",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379620.545586,
+                "end_wall_seconds": 1791379620.709769,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "239",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379620.548316,
+                "end_wall_seconds": 1791379620.709377,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "240",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379620.60357,
+                "end_wall_seconds": 1791379620.700891,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "243",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379622.178946,
+                "end_wall_seconds": 1791379622.341651,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "244",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379622.182211,
+                "end_wall_seconds": 1791379622.341309,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "245",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379622.237915,
+                "end_wall_seconds": 1791379622.333139,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "248",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379622.35839,
+                "end_wall_seconds": 1791379622.523584,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "249",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379622.361351,
+                "end_wall_seconds": 1791379622.523152,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "250",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379622.418378,
+                "end_wall_seconds": 1791379622.514354,
+                "terminal_event": "+++ exited with 0 +++"
+              }
+            ]
+          },
+          "process_trace_complete": true,
+          "invocation_end_minus_work_end_seconds": 3.951495789,
+          "scenario_coverage_passed": true,
+          "concurrency_coverage": {
+            "parent_child_cpu_intervals_overlap": true,
+            "parent_stop_during_child_cpu_work": true,
+            "parent_stop_during_child_wall_ns": [
+              1791379607612702952
+            ],
+            "child_cpu_end_wall_ns": 1791379618604881965
+          },
+          "boundary_check_passed": true,
+          "conformance_passed": true,
+          "whole_sandbox_completion_validated": false
+        },
+        {
+          "case": "final-subagent",
+          "invocation": {
+            "harness": "claude",
+            "case": "subagent",
+            "started_wall_ns": 1791379441492467126,
+            "ended_wall_ns": 1791379476424151350,
+            "exit_code": 0,
+            "timed_out": false,
+            "test_only_process_trace": true,
+            "process_group": 27,
+            "relay_binary_sha256": "db3295a74c7cf73c5fd7e9160d26d5bfc73989d54da7f9f9a79dc66722dcb9e9"
+          },
+          "native_hook_counts": {
+            "SessionStart": 1,
+            "UserPromptSubmit": 1,
+            "PreToolUse": 3,
+            "SubagentStart": 1,
+            "PostToolUse": 3,
+            "SubagentStop": 1,
+            "Stop": 1,
+            "SessionEnd": 1
+          },
+          "hook_deliveries": 12,
+          "hook_failures": 0,
+          "cli_results": [
+            {
+              "subtype": "success",
+              "is_error": false,
+              "num_turns": 3
+            }
+          ],
+          "witness_operations": [
+            "child",
+            "parent"
+          ],
+          "witness_complete": true,
+          "native_subagent_exercised": true,
+          "tools": [
+            {
+              "native_start_wall_ns": 1791379446985107754,
+              "native_end_wall_ns": 1791379464951702694,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791379465047343104,
+              "end_minus_native_end_seconds": 0.09564041,
+              "relay_end_reason": "completed",
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "toolu_bdrk_016X9TbGhPTHeKvY9BguL3cp",
+              "tool_name": "Agent",
+              "agent_id": null
+            },
+            {
+              "native_start_wall_ns": 1791379450952214586,
+              "native_end_wall_ns": 1791379463337063822,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791379463430002944,
+              "end_minus_native_end_seconds": 0.092939122,
+              "relay_end_reason": null,
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "toolu_bdrk_01RjgHyFz2o5tDKy3MAKnJAu",
+              "tool_name": "Bash",
+              "agent_id": "ac62773df895837e4",
+              "test_command": "python3 /configuration/oracle.py --operation child --seconds 12",
+              "oracle_end_wall_ns": 1791379463252100732,
+              "oracle_cpu_seconds": 11.998134453,
+              "relay_end_minus_work_end_seconds": 0.177902212,
+              "intentionally_detached": false
+            },
+            {
+              "native_start_wall_ns": 1791379465122468692,
+              "native_end_wall_ns": 1791379473422531479,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791379473529361920,
+              "end_minus_native_end_seconds": 0.106830441,
+              "relay_end_reason": null,
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "toolu_bdrk_015gmtSP9q24UcZyiqFjZ5uP",
+              "tool_name": "Bash",
+              "agent_id": null,
+              "test_command": "python3 /configuration/oracle.py --operation parent --seconds 8",
+              "oracle_end_wall_ns": 1791379473343441856,
+              "oracle_cpu_seconds": 7.9998190970000005,
+              "relay_end_minus_work_end_seconds": 0.185920064,
+              "intentionally_detached": false
+            }
+          ],
+          "subagents": [
+            {
+              "agent_id": "ac62773df895837e4",
+              "native_start_wall_ns": 1791379447163985552,
+              "native_end_wall_ns": 1791379464778503546,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791379464874257152,
+              "end_minus_native_end_seconds": 0.095753606,
+              "relay_end_reason": null,
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false
+            }
+          ],
+          "setup_valid": true,
+          "process_trace": {
+            "trace_files": 97,
+            "terminal_events": 97,
+            "executed_processes": [
+              {
+                "pid": "100",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379464.900958,
+                "end_wall_seconds": 1791379465.058481,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "101",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379464.954752,
+                "end_wall_seconds": 1791379465.050011,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "104",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379465.068183,
+                "end_wall_seconds": 1791379465.232046,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "105",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379465.071199,
+                "end_wall_seconds": 1791379465.231732,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "106",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379465.125446,
+                "end_wall_seconds": 1791379465.223319,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "109",
+                "executables": [
+                  "bash"
+                ],
+                "first_trace_wall_seconds": 1791379465.244798,
+                "end_wall_seconds": 1791379473.357517,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "111",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379465.256079,
+                "end_wall_seconds": 1791379473.356303,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "112",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379473.368467,
+                "end_wall_seconds": 1791379473.541567,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "113",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379473.37121,
+                "end_wall_seconds": 1791379473.541248,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "114",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379473.425781,
+                "end_wall_seconds": 1791379473.53229,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "117",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379476.047813,
+                "end_wall_seconds": 1791379476.208817,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "118",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379476.050951,
+                "end_wall_seconds": 1791379476.208473,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "119",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379476.104972,
+                "end_wall_seconds": 1791379476.201281,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "122",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379476.226894,
+                "end_wall_seconds": 1791379476.384886,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "123",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379476.229921,
+                "end_wall_seconds": 1791379476.384542,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "124",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379476.284106,
+                "end_wall_seconds": 1791379476.377074,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "30",
+                "executables": [
+                  "claude"
+                ],
+                "first_trace_wall_seconds": 1791379441.50053,
+                "end_wall_seconds": 1791379476.400791,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "37",
+                "executables": [
+                  "git"
+                ],
+                "first_trace_wall_seconds": 1791379441.834442,
+                "end_wall_seconds": 1791379441.838325,
+                "terminal_event": "+++ exited with 128 +++"
+              },
+              {
+                "pid": "38",
+                "executables": [
+                  "git"
+                ],
+                "first_trace_wall_seconds": 1791379441.84919,
+                "end_wall_seconds": 1791379441.853443,
+                "terminal_event": "+++ exited with 128 +++"
+              },
+              {
+                "pid": "39",
+                "executables": [
+                  "git"
+                ],
+                "first_trace_wall_seconds": 1791379441.868694,
+                "end_wall_seconds": 1791379441.873277,
+                "terminal_event": "+++ exited with 128 +++"
+              },
+              {
+                "pid": "40",
+                "executables": [
+                  "2.1.280"
+                ],
+                "first_trace_wall_seconds": 1791379441.918478,
+                "end_wall_seconds": 1791379441.92442,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "41",
+                "executables": [
+                  "2.1.280"
+                ],
+                "first_trace_wall_seconds": 1791379441.921721,
+                "end_wall_seconds": 1791379441.928103,
+                "terminal_event": "+++ exited with 2 +++"
+              },
+              {
+                "pid": "42",
+                "executables": [
+                  "2.1.280"
+                ],
+                "first_trace_wall_seconds": 1791379441.927197,
+                "end_wall_seconds": 1791379441.936469,
+                "terminal_event": "+++ exited with 1 +++"
+              },
+              {
+                "pid": "47",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379441.958839,
+                "end_wall_seconds": 1791379442.126532,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "48",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379441.961596,
+                "end_wall_seconds": 1791379442.126208,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "50",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379442.016945,
+                "end_wall_seconds": 1791379442.118026,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "53",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379442.190057,
+                "end_wall_seconds": 1791379442.351688,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "54",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379442.192784,
+                "end_wall_seconds": 1791379442.351339,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "55",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379442.246665,
+                "end_wall_seconds": 1791379442.342298,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "59",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379446.91986,
+                "end_wall_seconds": 1791379447.095315,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "60",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379446.922895,
+                "end_wall_seconds": 1791379447.094981,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "61",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379446.989416,
+                "end_wall_seconds": 1791379447.0866,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "64",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379447.110045,
+                "end_wall_seconds": 1791379447.273688,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "65",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379447.11288,
+                "end_wall_seconds": 1791379447.273317,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "66",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379447.166967,
+                "end_wall_seconds": 1791379447.264613,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "69",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379450.893602,
+                "end_wall_seconds": 1791379451.057779,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "70",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379450.896758,
+                "end_wall_seconds": 1791379451.057445,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "71",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379450.955235,
+                "end_wall_seconds": 1791379451.048996,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "78",
+                "executables": [
+                  "bash",
+                  "env"
+                ],
+                "first_trace_wall_seconds": 1791379451.093662,
+                "end_wall_seconds": 1791379451.108531,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "79",
+                "executables": [
+                  "bash"
+                ],
+                "first_trace_wall_seconds": 1791379451.098248,
+                "end_wall_seconds": 1791379451.147443,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "80",
+                "executables": [
+                  "run-parts"
+                ],
+                "first_trace_wall_seconds": 1791379451.104522,
+                "end_wall_seconds": 1791379451.107231,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "81",
+                "executables": [
+                  "locale-check"
+                ],
+                "first_trace_wall_seconds": 1791379451.109014,
+                "end_wall_seconds": 1791379451.111373,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "82",
+                "executables": [
+                  "cat"
+                ],
+                "first_trace_wall_seconds": 1791379451.116026,
+                "end_wall_seconds": 1791379451.122817,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "83",
+                "executables": [
+                  "cat"
+                ],
+                "first_trace_wall_seconds": 1791379451.124526,
+                "end_wall_seconds": 1791379451.130997,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "84",
+                "executables": [
+                  "cat"
+                ],
+                "first_trace_wall_seconds": 1791379451.13242,
+                "end_wall_seconds": 1791379451.139128,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "85",
+                "executables": [
+                  "cat"
+                ],
+                "first_trace_wall_seconds": 1791379451.140222,
+                "end_wall_seconds": 1791379451.146964,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "86",
+                "executables": [
+                  "bash"
+                ],
+                "first_trace_wall_seconds": 1791379451.154317,
+                "end_wall_seconds": 1791379463.267515,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "88",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379451.16538,
+                "end_wall_seconds": 1791379463.266311,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "89",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379463.283489,
+                "end_wall_seconds": 1791379463.441812,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "90",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379463.286204,
+                "end_wall_seconds": 1791379463.441468,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "91",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379463.340088,
+                "end_wall_seconds": 1791379463.432631,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "94",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379464.717872,
+                "end_wall_seconds": 1791379464.885876,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "95",
+                "executables": [
+                  "python3"
+                ],
+                "first_trace_wall_seconds": 1791379464.722445,
+                "end_wall_seconds": 1791379464.885534,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "96",
+                "executables": [
+                  "nemo-relay"
+                ],
+                "first_trace_wall_seconds": 1791379464.781524,
+                "end_wall_seconds": 1791379464.877034,
+                "terminal_event": "+++ exited with 0 +++"
+              },
+              {
+                "pid": "99",
+                "executables": [
+                  "sh"
+                ],
+                "first_trace_wall_seconds": 1791379464.897802,
+                "end_wall_seconds": 1791379465.058816,
+                "terminal_event": "+++ exited with 0 +++"
+              }
+            ]
+          },
+          "process_trace_complete": true,
+          "invocation_end_minus_work_end_seconds": 3.080709494,
+          "scenario_coverage_passed": false,
+          "concurrency_coverage": {
+            "parent_child_cpu_intervals_overlap": false,
+            "parent_stop_during_child_cpu_work": false,
+            "parent_stop_during_child_wall_ns": [],
+            "child_cpu_end_wall_ns": 1791379463252100732
+          },
+          "boundary_check_passed": true,
+          "conformance_passed": false,
+          "whole_sandbox_completion_validated": false
+        }
+      ]
+    }
+  ]
+}

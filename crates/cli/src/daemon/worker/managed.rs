@@ -252,19 +252,22 @@ impl ManagedRuntime {
                     .map(|event| operational.clone().with_session(event.session_id()))
                     .unwrap_or(operational);
                 operational::hook_started(&operational, "managed_worker_hook");
-                if let Err(error) = self
+                let effects = match self
                     .sessions
                     .apply_authenticated_events(&parts.headers, outcome.events, &self.owner)
                     .await
                 {
-                    operational::hook_failed(
-                        &operational,
-                        "managed_worker_hook",
-                        error.log_kind(),
-                        true,
-                    );
-                    return Err(error);
-                }
+                    Ok(effects) => effects,
+                    Err(error) => {
+                        operational::hook_failed(
+                            &operational,
+                            "managed_worker_hook",
+                            error.log_kind(),
+                            true,
+                        );
+                        return Err(error);
+                    }
+                };
                 if let Some(permission) = outcome.permission {
                     let result = self.authorize_permission(permission).await;
                     operational::hook_completed(
@@ -297,7 +300,10 @@ impl ManagedRuntime {
                     });
                 }
                 operational::hook_completed(&operational, "managed_worker_hook", "completed");
-                Ok(outcome.response)
+                Ok(claude_code::response_with_effects(
+                    outcome.response,
+                    &effects,
+                ))
             }
             HookRoute::Pi => {
                 let outcome = pi::adapt(payload, &parts.headers);

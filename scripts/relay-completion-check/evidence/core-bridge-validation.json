@@ -1,0 +1,29 @@
+{
+  "collected_at_utc": "2026-10-07T16:58:12.680391+00:00",
+  "base": "db4c6c520d66f15acf28b21be179a6d576254a1b",
+  "branch": "codex/relay-only-lifecycle",
+  "summaries": [
+    "Summary [  35.630s] 5341 tests run: 5341 passed (1 flaky), 0 skipped",
+    "Summary [  13.547s] 10 tests run: 10 passed, 0 skipped",
+    "Summary [  26.152s] 13 tests run: 13 passed, 0 skipped",
+    "Summary [   0.047s] 20 tests run: 20 passed, 0 skipped"
+  ],
+  "sha256": {
+    "crates/cli/src/agents/claude/adapter.rs": "e68d884e14dc561a97ea3fea7922c0312550fe956b7bd18de256e32818c51475",
+    "crates/cli/src/agents/claude/mod.rs": "e03bacbce0f813c9c6d9164c4ffe99432e5f79d3d7cc9f7b54502f6b205c7950",
+    "crates/cli/src/agents/codex/adapter.rs": "0cbe9724edb011f7fe166b313fe241063e43121e474f87def4e9aae90b680de7",
+    "crates/cli/src/daemon/worker/managed.rs": "5d562900dcae50522f4bbbe540606cf8f63d08721e6963a3b7ad66c6e03487cf",
+    "crates/cli/src/events/mod.rs": "4ca75a44ee0cb0444ffaa11abd8faa86f2acb37d40e137857de0477dc9948ae6",
+    "crates/cli/src/server/mod.rs": "4e4f4896c88040304d00ea0b1c6ef1a20d5b74df374d7ecd7d626d748d75c151",
+    "crates/cli/src/sessions/mod.rs": "d48804893096d5bd59b72a259794765be9b5a20206d224f936877388aa1a3938",
+    "crates/cli/tests/coverage/agents/claude_completion_tests.rs": "b360df25afddc2f00731124256e7826830dc08f0fe189eb6db7d7e57b80499b0",
+    "crates/cli/tests/coverage/agents/codex_adapter_tests.rs": "e0c29060f0efb4c015a081ee54f849920f2e2d6716ccd5e616e0e08c301cd20c",
+    "crates/cli/tests/coverage/agents/coding_agent_tests.rs": "53c69a0af72968de5e6dc6c9c1daf2cb61e7ff6477d7475a0c6e59e8d8c64d58",
+    "crates/cli/tests/coverage/daemon/worker_managed_tests.rs": "056d9f5cbb6d8150aeb6e2fa5d6a7ceefe1def5cb6d953f03a13be165936fc1f",
+    "crates/cli/tests/coverage/shared/claude_transform_tests.rs": "a77823591f3d35292ff175651827e21e17062333ab54649f86dd487503e8d474",
+    "crates/cli/tests/coverage/shared/server_tests.rs": "51cf748e6f32f90cdb698bac5d4cc564a91e160c417a9ce3a562fac45fb15b1d",
+    "crates/cli/tests/coverage/shared/session_tests.rs": "795e5ebad2e00c7538b2092b00031f9ba54e968f360c255d75b539112e43b4cc",
+    "integrations/coding-agents/claude-code/README.md": "ee59f7be5bf7e427da66142ac8e0da6c29bb817577f152b2f494bacedf9f4ec5",
+    "integrations/coding-agents/claude-code/hooks/hooks.json": "36ac8e16e3d3b27f080030389e42a9db9cbc366fd983a18bb2c3adbae38052f8"
+  }
+}

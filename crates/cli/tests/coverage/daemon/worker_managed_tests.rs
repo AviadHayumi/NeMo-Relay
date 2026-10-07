@@ -1912,3 +1912,63 @@ async fn malformed_permission_hooks_fail_closed_in_each_native_response_shape() 
 
     runtime.close().await.expect("close managed runtime");
 }
+
+#[tokio::test]
+async fn managed_claude_pre_tool_returns_rewritten_input_without_permission_grant() {
+    use nemo_relay::api::registry::{
+        deregister_tool_request_intercept, register_tool_request_intercept,
+    };
+
+    let _guard = PLUGIN_CONFIG_TEST_LOCK.lock().await;
+    let runtime =
+        ManagedRuntime::initialize(GatewayConfig::default(), Vec::new(), "rewrite-owner".into())
+            .await
+            .unwrap();
+    const INTERCEPT: &str = "managed-claude-input-rewrite";
+    struct Cleanup;
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = deregister_tool_request_intercept(INTERCEPT);
+        }
+    }
+    let _cleanup = Cleanup;
+    register_tool_request_intercept(
+        INTERCEPT,
+        1,
+        false,
+        Arc::new(|_, mut args| {
+            Box::pin(async move {
+                args["command"] = json!("printf rewritten");
+                Ok(args)
+            })
+        }),
+    )
+    .unwrap();
+
+    let response = runtime
+        .handle_hook(
+            HookRoute::Claude,
+            Request::post("/hook")
+                .body(Body::from(
+                    json!({
+                        "session_id": "managed-transform-session", "hook_event_name": "PreToolUse",
+                        "tool_use_id": "managed-tool-id", "tool_name": "Bash",
+                        "tool_input": {"command": "printf original", "timeout": 15000},
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(
+        body,
+        json!({"continue": true, "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "updatedInput": {"command": "printf rewritten", "timeout": 15000},
+        }})
+    );
+    runtime.close().await.unwrap();
+}

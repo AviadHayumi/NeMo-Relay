@@ -5,9 +5,10 @@ use axum::http::HeaderMap;
 use serde_json::{Value, json};
 
 use crate::agents::shared::adapters::{
-    AdapterOutcome, CODEX_PAYLOAD_EXTRACTOR, ClassificationRules, classify, permission_request,
+    AdapterOutcome, CODEX_PAYLOAD_EXTRACTOR, ClassificationRules, classify, normalize_name,
+    permission_request,
 };
-use crate::events::{AgentKind, ToolEvent};
+use crate::events::{AgentKind, NormalizedEvent, ToolEvent};
 
 /// Normalizes Codex hook payloads while leaving Codex hook control flow untouched.
 ///
@@ -15,7 +16,7 @@ use crate::events::{AgentKind, ToolEvent};
 /// hooks instead of making allow/deny decisions. Event spelling is accepted in both camelCase and
 /// snake_case forms so installed hooks and inline `run` hook configuration share one path.
 pub(crate) fn adapt(payload: Value, headers: &HeaderMap) -> AdapterOutcome {
-    let events = classify(
+    let mut events = classify(
         &payload,
         headers,
         &CODEX_PAYLOAD_EXTRACTOR,
@@ -35,6 +36,23 @@ pub(crate) fn adapt(payload: Value, headers: &HeaderMap) -> AdapterOutcome {
             compaction: &[],
         },
     );
+    // Recent Codex hooks share the root session_id across threads. agent_id identifies the
+    // thread that emitted a prompt or Stop. Preserve that ownership at turn boundaries so a
+    // child's prompt cannot supersede its parent's turn and Stop cannot close sibling work.
+    if let Some(child_id) = shared_session_child_id(&payload) {
+        events.retain_mut(|event| match event {
+            NormalizedEvent::PromptSubmitted(event) | NormalizedEvent::TurnEnded(event) => {
+                if let Some(metadata) = event.metadata.as_object_mut() {
+                    metadata.insert("subagent_id".into(), json!(child_id));
+                }
+                true
+            }
+            // There is no next child request to correlate after Stop. Keeping this hint would
+            // lazily open a phantom root turn if a late child Stop arrives after root completion.
+            NormalizedEvent::LlmHint(event) => normalize_name(&event.event_name) != "stop",
+            _ => true,
+        });
+    }
     AdapterOutcome {
         events,
         response: json!({}),
@@ -46,6 +64,15 @@ pub(crate) fn adapt(payload: Value, headers: &HeaderMap) -> AdapterOutcome {
         )
         .map(|request| request.map(without_approval_description)),
     }
+}
+
+fn shared_session_child_id(payload: &Value) -> Option<&str> {
+    // Compare native identifiers, not a caller's Relay session-header override. A missing or
+    // empty identifier is insufficient evidence that this hook belongs to a child thread.
+    let session_id = payload.get("session_id")?.as_str()?;
+    let agent_id = payload.get("agent_id")?.as_str()?;
+    (!session_id.trim().is_empty() && !agent_id.trim().is_empty() && agent_id != session_id)
+        .then_some(agent_id)
 }
 
 /// Builds Codex's native PermissionRequest denial.
@@ -76,3 +103,7 @@ fn without_approval_description(mut event: ToolEvent) -> ToolEvent {
     }
     event
 }
+
+#[cfg(test)]
+#[path = "../../../tests/coverage/agents/codex_adapter_tests.rs"]
+mod tests;

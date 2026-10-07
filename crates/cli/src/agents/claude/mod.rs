@@ -32,6 +32,7 @@ pub(super) const DESCRIPTOR: AgentDescriptor = AgentDescriptor {
         "SubagentStop",
         "Notification",
         "Stop",
+        "StopFailure",
         "PreCompact",
         "PostCompact",
         "SessionEnd",

@@ -1,0 +1,24 @@
+{
+  "scope": "Private repository publication; no cluster rollout or upstream PR",
+  "source_hash_record": "core-bridge-validation.json",
+  "current_staged_source_hashes_match": 16,
+  "local_pre_commit": {
+    "result": "passed",
+    "command": "SKIP=cargo-clippy,cargo-check UV_NO_SYNC=1 uv run pre-commit run",
+    "note": "Rust workspace hooks run separately with the validated Linux compiler; local Rust 1.91.1 rejects newer upstream syntax."
+  },
+  "linux_rust_checks": {
+    "rust_version": "1.96.1",
+    "cargo clippy --workspace --all-targets -- -D warnings": "passed",
+    "cargo check --workspace --all-targets": "passed",
+    "environment": "Isolated relay-play cc-fleet/relay-bridge-builder with matching source hashes"
+  },
+  "app_submodule": {
+    "path": "examples/idle-fleet",
+    "repository": "AviadHayumi/idle-example-cc",
+    "commit": "242723f10f4b8665cd2f89a52abdcf5663110f66",
+    "visibility": "PRIVATE"
+  },
+  "raw_logs_and_credentials": "excluded",
+  "captured_evidence": "Original reports and unified patch context preserved; fixture-specific whitespace rules added."
+}

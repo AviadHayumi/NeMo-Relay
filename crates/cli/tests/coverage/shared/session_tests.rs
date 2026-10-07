@@ -6969,7 +6969,7 @@ async fn gateway_shutdown_closes_codex_sessions_without_session_end_hook() {
 }
 
 #[tokio::test]
-async fn idle_timeout_closes_codex_session_without_session_end_hook() {
+async fn idle_timeout_keeps_codex_child_without_completion_hook() {
     let subscriber_name = "cli-idle-timeout-close-reason-test";
     let _ = deregister_subscriber(subscriber_name);
     let close_statuses = Arc::new(StdMutex::new(Vec::<(String, String)>::new()));
@@ -7033,24 +7033,21 @@ async fn idle_timeout_closes_codex_session_without_session_end_hook() {
         .await
         .unwrap();
 
-    assert_eq!(closed, 1);
+    assert_eq!(closed, 0);
     {
         let sessions = manager.inner.lock().await;
         let session = sessions.get("codex-idle").unwrap();
-        assert!(session.turn_scope.is_none());
-        assert!(session.subagents.is_empty());
+        assert!(session.turn_scope.is_some());
+        assert!(session.subagents.contains_key("worker"));
     }
 
     flush_subscribers().unwrap();
     let statuses = close_statuses.lock().unwrap().clone();
     assert!(
-        statuses.contains(&("subagent:worker".to_string(), "idle_timeout".to_string())),
-        "expected idle timeout to close the child scope, got {statuses:?}"
+        statuses.is_empty(),
+        "quiet time must not finish a live child: {statuses:?}"
     );
-    assert!(
-        statuses.contains(&("codex-turn".to_string(), "idle_timeout".to_string())),
-        "expected idle timeout to close the turn scope, got {statuses:?}"
-    );
+    manager.close_all("test_shutdown").await.unwrap();
 
     deregister_subscriber(subscriber_name).unwrap();
 }
@@ -7093,7 +7090,7 @@ async fn idle_timeout_keeps_recent_claude_subagent_session_open() {
 }
 
 #[tokio::test]
-async fn idle_timeout_closes_claude_subagent_with_no_followup_activity() {
+async fn idle_timeout_keeps_claude_subagent_without_completion_hook() {
     let subscriber_name = "cli-claude-idle-subagent-close-reason-test";
     let _ = deregister_subscriber(subscriber_name);
     let close_statuses = Arc::new(StdMutex::new(Vec::<(String, String)>::new()));
@@ -7152,27 +7149,21 @@ async fn idle_timeout_closes_claude_subagent_with_no_followup_activity() {
         .await
         .unwrap();
 
-    assert_eq!(closed, 1);
+    assert_eq!(closed, 0);
     {
         let sessions = manager.inner.lock().await;
         let session = sessions.get("claude-idle").unwrap();
-        assert!(session.turn_scope.is_none());
-        assert!(session.subagents.is_empty());
+        assert!(session.turn_scope.is_some());
+        assert!(session.subagents.contains_key("idle-worker"));
     }
 
     flush_subscribers().unwrap();
     let statuses = close_statuses.lock().unwrap().clone();
     assert!(
-        statuses.contains(&(
-            "subagent:idle-worker".to_string(),
-            "idle_timeout".to_string()
-        )),
-        "expected idle timeout to close the Claude subagent scope, got {statuses:?}"
+        statuses.is_empty(),
+        "quiet time must not finish a live child: {statuses:?}"
     );
-    assert!(
-        statuses.contains(&("claude-code-turn".to_string(), "idle_timeout".to_string())),
-        "expected idle timeout to close the Claude turn scope, got {statuses:?}"
-    );
+    manager.close_all("test_shutdown").await.unwrap();
 
     deregister_subscriber(subscriber_name).unwrap();
 }
@@ -8749,5 +8740,573 @@ async fn mcp_harness_metadata_reaches_tool_events_and_promoted_spans() {
             }
             subscriber.shutdown().unwrap();
         }
+    }
+}
+
+// Codex's child hooks can retain the root session_id and identify their owner with agent_id.
+// Replays the ordering observed with a real parallel Codex run: parent sleep, then child prompt.
+#[tokio::test]
+async fn codex_shared_session_child_prompt_preserves_parent_work() {
+    let manager = SessionManager::new(session_test_config());
+    let headers = HeaderMap::new();
+    start_codex_prompt_turn(&manager, &headers, "parent-thread").await;
+    for payload in [
+        json!({
+            "session_id": "parent-thread", "hook_event_name": "SubagentStart",
+            "agent_id": "child-thread"
+        }),
+        json!({
+            "session_id": "parent-thread", "hook_event_name": "PreToolUse",
+            "agent_id": "parent-thread", "tool_use_id": "parent-sleep",
+            "tool_name": "Bash", "tool_input": {"command": "sleep 8"}
+        }),
+    ] {
+        apply_codex_payload(&manager, &headers, payload).await;
+    }
+    let (turn_uuid, tool_uuid, child_uuid) = {
+        let sessions = manager.inner.lock().await;
+        let session = sessions.get("parent-thread").unwrap();
+        (
+            active_turn_uuid(session),
+            session.tools.get("parent-sleep").unwrap().handle.uuid,
+            session.subagents.get("child-thread").unwrap().uuid,
+        )
+    };
+    apply_codex_payload(
+        &manager,
+        &headers,
+        json!({
+            "session_id": "parent-thread", "hook_event_name": "UserPromptSubmit",
+            "agent_id": "child-thread", "turn_id": "child-turn",
+            "prompt": "Write independent tests."
+        }),
+    )
+    .await;
+    {
+        let sessions = manager.inner.lock().await;
+        let session = sessions.get("parent-thread").unwrap();
+        assert_eq!(
+            active_turn_uuid(session),
+            turn_uuid,
+            "child prompt closed the parent turn"
+        );
+        assert_eq!(
+            session
+                .tools
+                .get("parent-sleep")
+                .map(|tool| tool.handle.uuid),
+            Some(tool_uuid),
+            "child prompt ended the unfinished parent command"
+        );
+        assert_eq!(
+            session
+                .subagents
+                .get("child-thread")
+                .map(|child| child.uuid),
+            Some(child_uuid),
+            "child prompt ended its own unfinished subagent scope"
+        );
+    }
+    apply_codex_payload(
+        &manager,
+        &headers,
+        json!({
+            "session_id": "parent-thread", "hook_event_name": "PostToolUse",
+            "agent_id": "parent-thread", "tool_use_id": "parent-sleep",
+            "tool_name": "Bash", "tool_output": {"exit_code": 0}
+        }),
+    )
+    .await;
+    assert!(
+        manager
+            .inner
+            .lock()
+            .await
+            .get("parent-thread")
+            .unwrap()
+            .tools
+            .is_empty()
+    );
+    stop_codex_turn(&manager, &headers, "parent-thread").await;
+}
+
+#[tokio::test]
+async fn codex_shared_session_child_stop_preserves_parent_and_sibling_work() {
+    let manager = SessionManager::new(session_test_config());
+    let headers = HeaderMap::new();
+    start_codex_prompt_turn(&manager, &headers, "parent-thread").await;
+    for child in ["child-thread", "sibling-thread"] {
+        apply_codex_payload(
+            &manager,
+            &headers,
+            json!({
+                "session_id": "parent-thread", "hook_event_name": "SubagentStart",
+                "agent_id": child
+            }),
+        )
+        .await;
+    }
+    apply_codex_payload(
+        &manager,
+        &headers,
+        json!({
+            "session_id": "parent-thread", "hook_event_name": "PreToolUse",
+            "agent_id": "parent-thread", "tool_use_id": "parent-sleep",
+            "tool_name": "Bash", "tool_input": {"command": "sleep 8"}
+        }),
+    )
+    .await;
+    let turn_uuid = {
+        let sessions = manager.inner.lock().await;
+        active_turn_uuid(sessions.get("parent-thread").unwrap())
+    };
+    for event in ["Stop", "SubagentStop"] {
+        apply_codex_payload(
+            &manager,
+            &headers,
+            json!({
+                "session_id": "parent-thread", "hook_event_name": event,
+                "agent_id": "child-thread", "response": "Child finished."
+            }),
+        )
+        .await;
+        let sessions = manager.inner.lock().await;
+        let session = sessions.get("parent-thread").unwrap();
+        assert_eq!(
+            active_turn_uuid(session),
+            turn_uuid,
+            "child stop closed the parent turn"
+        );
+        assert!(
+            session.tools.contains_key("parent-sleep"),
+            "child stop ended the parent command"
+        );
+        assert!(
+            session.subagents.contains_key("sibling-thread"),
+            "child stop ended a sibling"
+        );
+        assert!(
+            !session.subagents.contains_key("child-thread"),
+            "finished child was left open"
+        );
+    }
+    // The root's own agent_id is not a child id: its actual Stop still closes the turn.
+    apply_codex_payload(
+        &manager,
+        &headers,
+        json!({
+            "session_id": "parent-thread", "hook_event_name": "Stop",
+            "agent_id": "parent-thread", "response": "Parent finished."
+        }),
+    )
+    .await;
+    let sessions = manager.inner.lock().await;
+    assert!(sessions.get("parent-thread").unwrap().turn_scope.is_none());
+    drop(sessions);
+    // A duplicate child completion arriving after the root stopped must not invent a new turn.
+    apply_codex_payload(
+        &manager,
+        &headers,
+        json!({
+            "session_id": "parent-thread", "hook_event_name": "Stop",
+            "agent_id": "child-thread", "response": "Child finished."
+        }),
+    )
+    .await;
+    let sessions = manager.inner.lock().await;
+    assert!(sessions.get("parent-thread").unwrap().turn_scope.is_none());
+}
+
+// Late child lifecycle delivery is not new parent work, even if its start was never observed.
+#[tokio::test]
+async fn codex_late_unknown_subagent_stop_does_not_open_a_phantom_turn() {
+    for completed_parent_turn in [false, true] {
+        let manager = SessionManager::new(session_test_config());
+        let headers = HeaderMap::new();
+        if completed_parent_turn {
+            start_codex_prompt_turn(&manager, &headers, "codex-late-child").await;
+            stop_codex_turn(&manager, &headers, "codex-late-child").await;
+        } else {
+            apply_codex_payload(
+                &manager,
+                &headers,
+                json!({
+                    "session_id": "codex-late-child", "hook_event_name": "SessionStart"
+                }),
+            )
+            .await;
+        }
+        assert!(!manager.has_open_sessions().await);
+        apply_codex_payload(
+            &manager,
+            &headers,
+            json!({
+                "session_id": "codex-late-child", "hook_event_name": "SubagentStop",
+                "agent_id": "unobserved-child"
+            }),
+        )
+        .await;
+        let phantom_turn = manager.has_open_sessions().await;
+        manager.close_all("test_shutdown").await.unwrap();
+        assert!(
+            !phantom_turn,
+            "late child completion opened a parent turn (previous turn completed: {completed_parent_turn})"
+        );
+    }
+}
+
+async fn apply_native_completion_hook(
+    manager: &SessionManager,
+    kind: AgentKind,
+    name: &str,
+    mut payload: Value,
+) {
+    payload["session_id"] = json!("native-child-lifetime");
+    payload["hook_event_name"] = json!(name);
+    let headers = HeaderMap::new();
+    let outcome = match kind {
+        AgentKind::ClaudeCode => {
+            crate::agents::shared::adapters::claude_code::adapt(payload, &headers)
+        }
+        AgentKind::Codex => crate::agents::shared::adapters::codex::adapt(payload, &headers),
+        _ => unreachable!(),
+    };
+    manager
+        .apply_events(&headers, outcome.events)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn parent_stop_preserves_child_tool_llm_and_later_child_activity() {
+    for kind in [AgentKind::ClaudeCode, AgentKind::Codex] {
+        let manager = SessionManager::new(session_test_config());
+        apply_native_completion_hook(&manager, kind, "SessionStart", json!({})).await;
+        apply_native_completion_hook(
+            &manager,
+            kind,
+            "UserPromptSubmit",
+            json!({"prompt": "Delegate."}),
+        )
+        .await;
+        apply_native_completion_hook(
+            &manager,
+            kind,
+            "SubagentStart",
+            json!({"agent_id": "background-child"}),
+        )
+        .await;
+        let tool = json!({"agent_id": "background-child", "tool_use_id": "child-tool", "tool_name": "Bash", "tool_input": {"command": "sleep 8"}});
+        apply_native_completion_hook(&manager, kind, "PreToolUse", tool.clone()).await;
+        let llm = manager
+            .start_llm(
+                &HeaderMap::new(),
+                LlmGatewayStart {
+                    session_id: Some("native-child-lifetime".into()),
+                    subagent_id: Some("background-child".into()),
+                    ..llm_start()
+                },
+            )
+            .await
+            .unwrap();
+        let llm_uuid = llm.handle.uuid;
+        let (child_uuid, tool_uuid) = {
+            let sessions = manager.inner.lock().await;
+            let session = sessions.get("native-child-lifetime").unwrap();
+            (
+                session.subagents["background-child"].uuid,
+                session.tools["child-tool"].handle.uuid,
+            )
+        };
+        apply_native_completion_hook(&manager, kind, "Stop", json!({})).await;
+        {
+            let sessions = manager.inner.lock().await;
+            let session = sessions.get("native-child-lifetime").unwrap();
+            assert!(
+                session.turn_scope.is_none(),
+                "parent turn should close for {kind:?}"
+            );
+            assert_eq!(
+                session
+                    .subagents
+                    .get("background-child")
+                    .map(|scope| scope.uuid),
+                Some(child_uuid),
+                "parent Stop closed child for {kind:?}"
+            );
+            assert_eq!(
+                session.tools.get("child-tool").map(|tool| tool.handle.uuid),
+                Some(tool_uuid),
+                "parent Stop closed child tool for {kind:?}"
+            );
+            assert!(
+                session.llms.contains_key(&llm_uuid.to_string()),
+                "parent Stop closed child LLM for {kind:?}"
+            );
+        }
+        assert!(manager.has_open_sessions().await);
+        manager
+            .end_llm(llm, json!({"output_text": "still the child"}), json!({}))
+            .await
+            .unwrap();
+        apply_native_completion_hook(&manager, kind, "PostToolUse", tool).await;
+        // The same child can start another tool after its parent has stopped.
+        let next_tool = json!({"agent_id": "background-child", "tool_use_id": "child-next-tool", "tool_name": "Read", "tool_input": {"file_path": "result.txt"}});
+        apply_native_completion_hook(&manager, kind, "PreToolUse", next_tool.clone()).await;
+        apply_native_completion_hook(&manager, kind, "PostToolUse", next_tool).await;
+        apply_native_completion_hook(
+            &manager,
+            kind,
+            "SubagentStop",
+            json!({"agent_id": "background-child"}),
+        )
+        .await;
+        let sessions = manager.inner.lock().await;
+        let session = sessions.get("native-child-lifetime").unwrap();
+        assert!(
+            session.turn_scope.is_none(),
+            "late child activity reopened parent turn for {kind:?}"
+        );
+        assert!(session.subagents.is_empty());
+        assert!(session.tools.is_empty());
+        assert!(session.llms.is_empty());
+        drop(sessions);
+        assert!(!manager.has_open_sessions().await);
+        manager.close_all("test_shutdown").await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn next_parent_prompt_preserves_existing_child_and_shutdown_cleans_it() {
+    for kind in [AgentKind::ClaudeCode, AgentKind::Codex] {
+        let manager = SessionManager::new(session_test_config());
+        apply_native_completion_hook(&manager, kind, "SessionStart", json!({})).await;
+        apply_native_completion_hook(
+            &manager,
+            kind,
+            "UserPromptSubmit",
+            json!({"prompt": "First parent task."}),
+        )
+        .await;
+        apply_native_completion_hook(
+            &manager,
+            kind,
+            "SubagentStart",
+            json!({"agent_id": "background-child"}),
+        )
+        .await;
+        let (child_uuid, first_parent_uuid) = {
+            let sessions = manager.inner.lock().await;
+            let session = sessions.get("native-child-lifetime").unwrap();
+            (
+                session.subagents["background-child"].uuid,
+                active_turn_uuid(session),
+            )
+        };
+        apply_native_completion_hook(
+            &manager,
+            kind,
+            "UserPromptSubmit",
+            json!({"prompt": "New parent task."}),
+        )
+        .await;
+        {
+            let sessions = manager.inner.lock().await;
+            let session = sessions.get("native-child-lifetime").unwrap();
+            assert_ne!(active_turn_uuid(session), first_parent_uuid);
+            let child = session
+                .subagents
+                .get("background-child")
+                .expect("new parent prompt ended the child");
+            assert_eq!(child.uuid, child_uuid);
+            assert_eq!(
+                child.parent_uuid,
+                Some(first_parent_uuid),
+                "child must retain its original trace parent"
+            );
+        }
+        apply_native_completion_hook(&manager, kind, "Stop", json!({})).await;
+        assert!(manager.has_open_sessions().await);
+        manager.close_all("test_shutdown").await.unwrap();
+        assert!(!manager.has_open_sessions().await);
+        assert!(manager.inner.lock().await.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn claude_child_stop_retains_missing_tool_end_until_late_post_hook() {
+    let manager = SessionManager::new(session_test_config());
+    let kind = AgentKind::ClaudeCode;
+    apply_native_completion_hook(&manager, kind, "SessionStart", json!({})).await;
+    apply_native_completion_hook(
+        &manager,
+        kind,
+        "UserPromptSubmit",
+        json!({"prompt": "Delegate."}),
+    )
+    .await;
+    apply_native_completion_hook(
+        &manager,
+        kind,
+        "SubagentStart",
+        json!({"agent_id": "background-child"}),
+    )
+    .await;
+    let tool = json!({"agent_id": "background-child", "tool_use_id": "late-tool", "tool_name": "Bash", "tool_input": {"command": "sleep 8"}});
+    apply_native_completion_hook(&manager, kind, "PreToolUse", tool.clone()).await;
+    apply_native_completion_hook(&manager, kind, "Stop", json!({})).await;
+    apply_native_completion_hook(
+        &manager,
+        kind,
+        "SubagentStop",
+        json!({"agent_id": "background-child"}),
+    )
+    .await;
+    {
+        let sessions = manager.inner.lock().await;
+        let session = sessions.get("native-child-lifetime").unwrap();
+        assert!(session.turn_scope.is_none());
+        assert!(session.subagents.is_empty());
+        assert!(
+            session.tools.contains_key("late-tool"),
+            "child Stop is not evidence the unmatched tool finished"
+        );
+    }
+    assert!(manager.has_open_sessions().await);
+    apply_native_completion_hook(&manager, kind, "PostToolUse", tool).await;
+    assert!(
+        !manager.has_open_sessions().await,
+        "late tool end must release retained work without reopening the parent turn"
+    );
+    manager.close_all("test_shutdown").await.unwrap();
+}
+
+#[tokio::test]
+async fn claude_child_request_affinity_survives_parent_stop_without_phantom_turn() {
+    let manager = SessionManager::new(session_test_config());
+    let kind = AgentKind::ClaudeCode;
+    apply_native_completion_hook(&manager, kind, "SessionStart", json!({})).await;
+    apply_native_completion_hook(
+        &manager,
+        kind,
+        "UserPromptSubmit",
+        json!({"prompt": "Delegate."}),
+    )
+    .await;
+    apply_native_completion_hook(
+        &manager,
+        kind,
+        "SubagentStart",
+        json!({"agent_id": "background-child"}),
+    )
+    .await;
+    let task = "Independently review the delegated implementation and its full test coverage.";
+    let first = manager
+        .start_llm(
+            &HeaderMap::new(),
+            LlmGatewayStart {
+                subagent_id: Some("background-child".into()),
+                ..llm_start_with_messages_task("native-child-lifetime", task)
+            },
+        )
+        .await
+        .unwrap();
+    let child_uuid = first.handle.parent_uuid;
+    manager
+        .end_llm(first, json!({"output_text": "Continue review."}), json!({}))
+        .await
+        .unwrap();
+    apply_native_completion_hook(&manager, kind, "Stop", json!({})).await;
+    let next = manager
+        .start_llm(
+            &HeaderMap::new(),
+            llm_start_with_messages_task("native-child-lifetime", task),
+        )
+        .await
+        .unwrap();
+    assert_eq!(next.handle.parent_uuid, child_uuid);
+    {
+        let sessions = manager.inner.lock().await;
+        assert!(
+            sessions
+                .get("native-child-lifetime")
+                .unwrap()
+                .turn_scope
+                .is_none(),
+            "known child gateway continuation reopened parent turn"
+        );
+    }
+    manager
+        .end_llm(next, json!({"output_text": "Review finished."}), json!({}))
+        .await
+        .unwrap();
+    apply_native_completion_hook(
+        &manager,
+        kind,
+        "SubagentStop",
+        json!({"agent_id": "background-child"}),
+    )
+    .await;
+    assert!(!manager.has_open_sessions().await);
+    manager.close_all("test_shutdown").await.unwrap();
+}
+
+#[tokio::test]
+async fn late_child_tool_result_with_changed_id_does_not_reopen_parent_turn() {
+    for kind in [AgentKind::ClaudeCode, AgentKind::Codex] {
+        let manager = SessionManager::new(session_test_config());
+        apply_native_completion_hook(&manager, kind, "SessionStart", json!({})).await;
+        apply_native_completion_hook(
+            &manager,
+            kind,
+            "UserPromptSubmit",
+            json!({"prompt": "Delegate."}),
+        )
+        .await;
+        apply_native_completion_hook(
+            &manager,
+            kind,
+            "SubagentStart",
+            json!({"agent_id": "background-child"}),
+        )
+        .await;
+        let mut tool = json!({
+            "agent_id": "background-child", "tool_use_id": "provisional-tool-id",
+            "tool_name": "Bash", "tool_input": {"command": "run-tests"}
+        });
+        apply_native_completion_hook(&manager, kind, "PreToolUse", tool.clone()).await;
+        apply_native_completion_hook(&manager, kind, "Stop", json!({})).await;
+        apply_native_completion_hook(
+            &manager,
+            kind,
+            "SubagentStop",
+            json!({"agent_id": "background-child"}),
+        )
+        .await;
+        assert!(manager.has_open_sessions().await);
+
+        // Pre/post can carry different call IDs. The supported unique name+arguments match
+        // must settle retained work even when the child scope has already ended.
+        tool["tool_use_id"] = json!("final-tool-id");
+        apply_native_completion_hook(&manager, kind, "PostToolUse", tool).await;
+        let (parent_reopened, retained_tools) = {
+            let sessions = manager.inner.lock().await;
+            let session = sessions.get("native-child-lifetime").unwrap();
+            (session.turn_scope.is_some(), session.tools.len())
+        };
+        let still_open = manager.has_open_sessions().await;
+        manager.close_all("test_shutdown").await.unwrap();
+        assert_eq!(
+            retained_tools, 0,
+            "late result did not settle work for {kind:?}"
+        );
+        assert!(
+            !parent_reopened,
+            "matching a retained tool by name and arguments reopened parent turn for {kind:?}"
+        );
+        assert!(
+            !still_open,
+            "matched tool result left false active work for {kind:?}"
+        );
     }
 }

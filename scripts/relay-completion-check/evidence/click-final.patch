@@ -1,0 +1,152 @@
+diff --git a/src/click/formatting.py b/src/click/formatting.py
+index 0b64f83..74345a0 100644
+--- a/src/click/formatting.py
++++ b/src/click/formatting.py
+@@ -34,6 +34,7 @@ def wrap_text(
+     initial_indent: str = "",
+     subsequent_indent: str = "",
+     preserve_paragraphs: bool = False,
++    break_on_hyphens: bool = True,
+ ) -> str:
+     """A helper function that intelligently wraps text.  By default, it
+     assumes that it operates on a single paragraph of text but if the
+@@ -52,6 +53,8 @@ def wrap_text(
+                               each consecutive line.
+     :param preserve_paragraphs: if this flag is set then the wrapping will
+                                 intelligently handle paragraphs.
++    :param break_on_hyphens: if ``False``, tokens are never split at
++                             hyphens.  Defaults to ``True`` (stdlib default).
+     """
+     from ._textwrap import TextWrapper
+ 
+@@ -61,6 +64,7 @@ def wrap_text(
+         initial_indent=initial_indent,
+         subsequent_indent=subsequent_indent,
+         replace_whitespace=False,
++        break_on_hyphens=break_on_hyphens,
+     )
+     if not preserve_paragraphs:
+         return wrapper.fill(text)
+@@ -167,6 +171,7 @@ class HelpFormatter:
+                     text_width,
+                     initial_indent=usage_prefix,
+                     subsequent_indent=indent,
++                    break_on_hyphens=False,
+                 )
+             )
+         else:
+@@ -176,7 +181,11 @@ class HelpFormatter:
+             indent = " " * (max(self.current_indent, term_len(prefix)) + 4)
+             self.write(
+                 wrap_text(
+-                    args, text_width, initial_indent=indent, subsequent_indent=indent
++                    args,
++                    text_width,
++                    initial_indent=indent,
++                    subsequent_indent=indent,
++                    break_on_hyphens=False,
+                 )
+             )
+ 
+diff --git a/tests/test_formatting.py b/tests/test_formatting.py
+index c79f657..e69e51a 100644
+--- a/tests/test_formatting.py
++++ b/tests/test_formatting.py
+@@ -366,3 +366,97 @@ def test_help_formatter_write_text():
+     actual = formatter.getvalue()
+     expected = "  Lorem ipsum dolor sit amet,\n  consectetur adipiscing elit\n"
+     assert actual == expected
++
++
++def test_write_usage_no_split_on_hyphen():
++    """Hyphenated option names are not split at hyphens in write_usage.
++
++    Regression for https://github.com/pallets/click/issues/3362.
++
++    With break_on_hyphens=True (the bug), textwrap treats each ``\\w-\\w``
++    sequence as a valid line-break point.  When padding fills the first
++    line to where '--max-retry-' (12 chars) fits but '--max-retry-count'
++    (17 chars) does not, the option name is split as '--max-retry-' / 'count VALUE'.
++
++    The fix passes break_on_hyphens=False to wrap_text inside write_usage
++    so the full token '--max-retry-count' wraps as a unit to the next line.
++
++    Overflow policy: when the option token is longer than the available column
++    (after the continuation indent), character-level breaking still occurs
++    because there is no space to fit the whole token.  The fix only prevents
++    the hyphen-logic split; it does not override the overflow fallback.
++    """
++    # width=65 matches the issue title.  36 'A' chars fill the first line
++    # to where '--max-retry-' (12) fits but '--max-retry-count' (17) does not.
++    formatter = click.HelpFormatter(width=65)
++    padding = "A" * 36
++    formatter.write_usage("prog", f"{padding} --max-retry-count VALUE")
++    output = formatter.getvalue()
++
++    # Option name must appear as a complete token on some line.
++    assert "--max-retry-count" in output, (
++        f"Option name was split at a hyphen:\n{output!r}"
++    )
++    # No line should end with '--max-retry-' (the hyphen-split fragment).
++    for line in output.splitlines():
++        assert not line.rstrip().endswith("--max-retry-"), (
++            f"Option name broken at hyphen boundary:\n{output!r}"
++        )
++
++
++def test_write_usage_option_intact_at_fitting_widths():
++    """Option token stays whole on the continuation line when it fits there.
++
++    At widths 32-34 the continuation indent is 11 chars, leaving 21-23 chars
++    of text space.  '--max-retry-count' is 17 chars so it fits whole; the
++    next word ('VALUE') may wrap further.  Verify the complete token is present
++    and no hyphen-split fragment appears.
++    """
++    for width in (32, 33, 34):
++        formatter = click.HelpFormatter(width=width)
++        formatter.write_usage("prog", "--max-retry-count VALUE")
++        output = formatter.getvalue()
++        assert "--max-retry-count" in output, (
++            f"Option name absent at width={width}:\n{output!r}"
++        )
++        assert "--max-retry-\n" not in output, (
++            f"Option name split at hyphen at width={width}:\n{output!r}"
++        )
++
++
++def test_write_usage_no_split_on_hyphen_various_widths():
++    """Hyphen-split fingerprint absent at widths 24-27 after the fix.
++
++    At widths 24-27 the continuation indent is 11 chars, leaving 13-16 chars.
++    '--max-retry-count' (17 chars) is longer than the available space so it
++    will be character-broken regardless.  But the hyphen-split pattern
++    '--max-retry-\\n' (where the token is cut exactly at its final hyphen by
++    break_on_hyphens=True logic) must NOT appear after the fix.
++    """
++    for width in (24, 25, 26, 27):
++        formatter = click.HelpFormatter(width=width)
++        formatter.write_usage("prog", "--max-retry-count VALUE")
++        output = formatter.getvalue()
++        # Bug fingerprint: '--max-retry-' ending a line (hyphen-logic split).
++        assert "--max-retry-\n" not in output, (
++            f"Option name split at hyphen for width={width}:\n{output!r}"
++        )
++
++
++def test_wrap_text_prose_preserves_hyphen_breaks():
++    """wrap_text() prose wrapping is unchanged: hyphens remain break points.
++
++    The fix is scoped to write_usage only.  The generic wrap_text() function
++    keeps break_on_hyphens=True (the Python/stdlib default), so ordinary
++    help text wraps the same way as unmodified Click 8.3.1.
++
++    Expected output verified against unmodified Click 8.3.1 at tag 8.3.1.
++    """
++    from click.formatting import wrap_text
++
++    # 'long-' fits at the end of the line; 'running' does not, so with
++    # break_on_hyphens=True the word is split as 'long-' / 'running'.
++    result = wrap_text("methods for long-running tasks", width=20)
++    assert result == "methods for long-\nrunning tasks", (
++        f"Prose hyphen-break behavior changed:\n{result!r}"
++    )

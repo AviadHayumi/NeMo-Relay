@@ -52,13 +52,11 @@ impl AgentKind {
 
     // Whether this harness can execute arguments the gateway rewrote.
     //
-    // Only pi: its `tool_call` hook documents in-place mutation of `input` as the mechanism, and
-    // the extension applies whatever the hook response carries. Codex and Claude Code have no
-    // equivalent return path, so running the request-intercept chain for them would record
-    // arguments on the tool span that never executed -- worse than not running it, because the
-    // trace would then disagree with reality.
+    // pi applies `input` from its extension response; Claude Code applies PreToolUse's
+    // `hookSpecificOutput.updatedInput`. Codex has no equivalent return path, so intercepts
+    // must not record rewritten arguments that its harness will never execute.
     pub(crate) const fn applies_tool_argument_transforms(self) -> bool {
-        matches!(self, Self::Pi)
+        matches!(self, Self::ClaudeCode | Self::Pi)
     }
 }
 

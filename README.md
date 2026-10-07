@@ -16,6 +16,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # NVIDIA NeMo Relay
 
+> **Aviad's development copy:** start with [our idle-visibility work](FORK.md)
+> for the Relay fixes, pinned Fleet application, plugin, tests and diagrams.
+> This branch is experimental and is not an upstream NVIDIA release.
+
 NVIDIA NeMo Relay provides visibility into and control over agent runs without
 requiring changes to the existing agent stack. It gives coding agents,
 applications, framework integrations, middleware, and observability backends a

@@ -1214,14 +1214,17 @@ async fn claude_code_hook(
         .map(|event| operational.clone().with_session(event.session_id()))
         .unwrap_or(operational);
     operational::hook_started(&operational, "hook_server");
-    if let Err(error) = state
+    let effects = match state
         .sessions
         .apply_authenticated_events(&headers, outcome.events, &owner)
         .await
     {
-        operational::hook_failed(&operational, "hook_server", error.log_kind(), true);
-        return Err(error);
-    }
+        Ok(effects) => effects,
+        Err(error) => {
+            operational::hook_failed(&operational, "hook_server", error.log_kind(), true);
+            return Err(error);
+        }
+    };
     if let Some(permission) = outcome.permission {
         let result = authorize_hook_permission(&state, permission, &owner).await;
         match &result {
@@ -1258,7 +1261,10 @@ async fn claude_code_hook(
         }));
     }
     operational::hook_completed(&operational, "hook_server", "completed");
-    Ok(Json(outcome.response))
+    Ok(Json(claude_code::response_with_effects(
+        outcome.response,
+        &effects,
+    )))
 }
 
 // Handles pi extension hooks. pi has no native hook-config file, so these arrive from a NeMo
@@ -1294,9 +1300,8 @@ async fn pi_hook(
             return Err(error);
         }
     };
-    // pi is the one agent whose hook response can carry a rewritten payload back: its `tool_call`
-    // hook documents in-place mutation of `input`, so the extension can apply what a request
-    // intercept produced. Absent a rewrite the body stays `{}`, which is what an allow has always
+    // pi's `tool_call` hook documents in-place mutation of `input`, so the extension can apply
+    // what a request intercept produced. Absent a rewrite the body stays `{}`, which an allow has always
     // been, so an older extension keeps working unchanged.
     operational::hook_completed(&operational, "hook_server", "completed");
     Ok(Json(pi::response_with_effects(outcome.response, &effects)))

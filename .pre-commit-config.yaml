@@ -20,7 +20,8 @@ repos:
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
-        exclude: '^ATTRIBUTIONS-(Rust|Python|Node)\.md$'
+        # Preserve captured task reports and unified-diff context byte-for-byte.
+        exclude: '^(ATTRIBUTIONS-(Rust|Python|Node)\.md|scripts/relay-completion-check/evidence/click-.*\.(patch|md))$'
       - id: end-of-file-fixer
         exclude: '^ATTRIBUTIONS-(Rust|Python|Node)\.md$'
       - id: check-executables-have-shebangs

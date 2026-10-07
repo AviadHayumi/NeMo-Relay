@@ -3,3 +3,7 @@
 
 examples/python-grpc-worker-plugin/nemo_relay_python_grpc_worker_example/worker.py text eol=lf
 *.cmd text eol=crlf
+
+# Captured task reports and patch context retain their original trailing spaces.
+scripts/relay-completion-check/evidence/click-*.patch whitespace=-blank-at-eol
+scripts/relay-completion-check/evidence/click-*-report.md whitespace=-blank-at-eol

@@ -206,8 +206,8 @@ the launched process.
 Generated Claude Code hooks include `SessionStart`, `SessionEnd`,
 `UserPromptSubmit`, `UserPromptExpansion`, `PreToolUse`, `PostToolUse`,
 `PostToolUseFailure`, `PermissionRequest`, `SubagentStart`, `SubagentStop`,
-`Notification`, `Stop`, `PreCompact`, and `PostCompact`. Both compaction hooks
-emit canonical `compaction` marks. Relay normalizes the other hooks as scope,
+`Notification`, `Stop`, `StopFailure`, `PreCompact`, and `PostCompact`. Both
+compaction hooks emit canonical `compaction` marks. Relay normalizes the other hooks as scope,
 prompt, tool, notification, subagent, or private LLM correlation events
 according to the hook payload. `UserPromptExpansion` records nonempty
 slash-command expansions as `skill.load.inferred`; Claude Code does not
@@ -230,6 +230,29 @@ uncorrelatable lifecycle hooks from exported user traces so they do not appear
 as synthetic `null`, `user: test`, `idle_timeout`, or lifecycle-only turns.
 The gateway records suppressed startup probes as debug-level
 `observability_bypassed` events when debug or trace logging is enabled.
+
+## Tool Input Rewrites
+
+A configured `tool_request_intercept` can change Claude Code tool arguments.
+Relay returns its result in the native `PreToolUse` response field
+`hookSpecificOutput.updatedInput`. For example, an intercept can change a Bash
+`command` while retaining its `timeout`, `description`, and other input fields.
+The result replaces the whole input object, so an intercept must return every
+field it wants Claude Code to keep.
+Relay rejects a non-object result before recording a tool start.
+
+Relay does not add `permissionDecision: "allow"` to a rewrite. Claude Code still
+checks its permissions against the changed input. Relay's existing conditional
+execution guardrails run before the intercept; a rejection or intercept error
+uses the existing hook error path. The separate `PermissionRequest` flow is
+unchanged. Standalone gateways and managed daemon workers both return rewrites,
+and the recorded tool span retains the original `tool_use_id`.
+
+If the same active tool hook is retried, Relay returns the saved rewrite without
+running the intercept again. Reusing that tool ID with different arguments is
+rejected; a retry cannot silently switch back to the original command.
+
+See Claude Code's [PreToolUse response contract](https://code.claude.com/docs/en/hooks#pretooluse-decision-control).
 
 ## Smoke Test
 
@@ -323,3 +346,30 @@ policies.
 private correlation and turn-boundary hint rather than a standalone
 user-visible mark. The other generated hooks normalize to their corresponding
 scope, tool, mark, notification, compaction, or subagent semantics.
+
+`StopFailure` is recorded as an observation-only mark. It does not open a new
+turn or close active parent work: Claude Code can report errors from an internal
+helper or background child with the parent's session identity. The mark carries
+`nemo_relay_observation_only: true` and `completion_signal: "unverified"`. Treat
+it as evidence of an error, not proof that the whole session has finished.
+
+When `Stop` or `SubagentStop` includes `background_tasks` or `session_crons`,
+Relay emits a separate observation-only `hook_mark` before the scope closes.
+Its metadata has `nemo_relay_observation_role: "background_snapshot"`, the
+parent `session_id`, and `snapshot_scope: "parent_session"`. A child stop also
+includes its `subagent_id`. The mark preserves each field exactly when present;
+a missing field is not an empty list. These snapshots require Claude Code
+2.1.145 or newer and survive when the final model response becomes the turn's
+exported output.
+
+A snapshot describes Claude's task registry at that hook boundary. It is not a
+process inventory or a suspension decision. A `SubagentStop` snapshot can still
+list the child that is about to finish, and a teammate can remain registered
+while waiting for a message.
+
+Ending the parent turn does not finish its independently running subagents.
+Relay keeps their scopes and known child-owned tool calls open until their own
+completion signals arrive. A later child tool result can finish its existing
+tool span without opening a new parent turn. If that result hook is missing,
+the unresolved tool stays open until its result or explicit session cleanup;
+silence is not completion evidence.

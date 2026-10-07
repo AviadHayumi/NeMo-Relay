@@ -1,0 +1,849 @@
+{
+  "scope": "Live stock CLI + Relay; no Fleet observer or suspension test",
+  "tolerances": {
+    "early_seconds": 0.05,
+    "late_seconds": 1
+  },
+  "interpretation": "A closed tool scope means that tool boundary closed. It does not by itself establish whole-sandbox completion.",
+  "harnesses": [
+    {
+      "harness": "claude",
+      "versions": {
+        "harness": "claude",
+        "cli": "2.1.280 (Claude Code)",
+        "relay": "nemo-relay 0.9.4"
+      },
+      "raw_atof_event_count": 591,
+      "cases": [
+        {
+          "case": "baseline-background",
+          "invocation": {
+            "harness": "claude",
+            "case": "background",
+            "started_wall_ns": 1791376483614610016,
+            "ended_wall_ns": 1791376489640083459,
+            "exit_code": 0,
+            "timed_out": false
+          },
+          "native_hook_counts": {
+            "SessionStart": 1,
+            "UserPromptSubmit": 1,
+            "PreToolUse": 1,
+            "PostToolUse": 1,
+            "Stop": 1,
+            "SessionEnd": 1
+          },
+          "hook_deliveries": 6,
+          "hook_failures": 0,
+          "cli_results": [
+            {
+              "subtype": "success",
+              "is_error": false,
+              "num_turns": 2
+            }
+          ],
+          "witness_operations": [
+            "background"
+          ],
+          "witness_complete": true,
+          "native_subagent_exercised": false,
+          "tools": [
+            {
+              "native_start_wall_ns": 1791376487881660835,
+              "native_end_wall_ns": 1791376488112297698,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791376488123992832,
+              "end_minus_native_end_seconds": 0.011695134,
+              "relay_end_reason": null,
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "toolu_bdrk_01CGwU2bF7kEftUaGU7h2EHK",
+              "tool_name": "Bash",
+              "agent_id": null,
+              "test_command": "python3 /configuration/oracle.py --operation background --seconds 20 --background",
+              "oracle_end_wall_ns": 1791376508057029196,
+              "oracle_cpu_seconds": 19.997821326999997,
+              "relay_end_minus_work_end_seconds": -19.933036364,
+              "intentionally_detached": true
+            }
+          ],
+          "subagents": [],
+          "setup_valid": true,
+          "invocation_end_minus_work_end_seconds": -18.416945737,
+          "scenario_coverage_passed": true,
+          "boundary_check_passed": true,
+          "conformance_passed": true,
+          "whole_sandbox_completion_validated": false
+        },
+        {
+          "case": "baseline-failure",
+          "invocation": {
+            "harness": "claude",
+            "case": "failure",
+            "started_wall_ns": 1791376516133246135,
+            "ended_wall_ns": 1791376523160363132,
+            "exit_code": 0,
+            "timed_out": false
+          },
+          "native_hook_counts": {
+            "SessionStart": 1,
+            "UserPromptSubmit": 1,
+            "PreToolUse": 1,
+            "PostToolUse": 1,
+            "Stop": 1,
+            "SessionEnd": 1
+          },
+          "hook_deliveries": 6,
+          "hook_failures": 0,
+          "cli_results": [
+            {
+              "subtype": "success",
+              "is_error": false,
+              "num_turns": 2
+            }
+          ],
+          "witness_operations": [
+            "failure"
+          ],
+          "witness_complete": true,
+          "native_subagent_exercised": false,
+          "tools": [
+            {
+              "native_start_wall_ns": 1791376518994344639,
+              "native_end_wall_ns": 1791376521176606999,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791376521188332032,
+              "end_minus_native_end_seconds": 0.011725033,
+              "relay_end_reason": null,
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "toolu_bdrk_014C4t31PkMQMjyqo8kdHw1A",
+              "tool_name": "Bash",
+              "agent_id": null,
+              "test_command": "python3 /configuration/oracle.py --operation failure --seconds 2 --exit-code 17; echo \"Exit code: $?\"",
+              "oracle_end_wall_ns": 1791376521123628047,
+              "oracle_cpu_seconds": 2.0005526220000003,
+              "relay_end_minus_work_end_seconds": 0.064703985,
+              "intentionally_detached": false
+            }
+          ],
+          "subagents": [],
+          "setup_valid": false,
+          "native_failed_tool_exercised": false,
+          "invocation_end_minus_work_end_seconds": 2.036735085,
+          "scenario_coverage_passed": true,
+          "boundary_check_passed": true,
+          "conformance_passed": false,
+          "whole_sandbox_completion_validated": false
+        },
+        {
+          "case": "baseline-foreground",
+          "invocation": {
+            "harness": "claude",
+            "case": "foreground",
+            "started_wall_ns": 1791376437460246623,
+            "ended_wall_ns": 1791376452502121476,
+            "exit_code": 0,
+            "timed_out": false
+          },
+          "native_hook_counts": {
+            "SessionStart": 1,
+            "UserPromptSubmit": 1,
+            "PreToolUse": 1,
+            "PostToolUse": 1,
+            "Stop": 1,
+            "SessionEnd": 1
+          },
+          "hook_deliveries": 6,
+          "hook_failures": 0,
+          "cli_results": [
+            {
+              "subtype": "success",
+              "is_error": false,
+              "num_turns": 2
+            }
+          ],
+          "witness_operations": [
+            "foreground"
+          ],
+          "witness_complete": true,
+          "native_subagent_exercised": false,
+          "tools": [
+            {
+              "native_start_wall_ns": 1791376440457041895,
+              "native_end_wall_ns": 1791376448637307668,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791376448649209088,
+              "end_minus_native_end_seconds": 0.01190142,
+              "relay_end_reason": null,
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "toolu_bdrk_01Up2XtkyRPAZFsreSPAnLii",
+              "tool_name": "Bash",
+              "agent_id": null,
+              "test_command": "python3 /configuration/oracle.py --operation foreground --seconds 8",
+              "oracle_end_wall_ns": 1791376448583984328,
+              "oracle_cpu_seconds": 7.999380536,
+              "relay_end_minus_work_end_seconds": 0.06522476,
+              "intentionally_detached": false
+            }
+          ],
+          "subagents": [],
+          "setup_valid": true,
+          "invocation_end_minus_work_end_seconds": 3.918137148,
+          "scenario_coverage_passed": true,
+          "boundary_check_passed": true,
+          "conformance_passed": true,
+          "whole_sandbox_completion_validated": false
+        },
+        {
+          "case": "baseline-subagent",
+          "invocation": {
+            "harness": "claude",
+            "case": "subagent",
+            "started_wall_ns": 1791376527830529744,
+            "ended_wall_ns": 1791376558701791372,
+            "exit_code": 0,
+            "timed_out": false
+          },
+          "native_hook_counts": {
+            "SessionStart": 1,
+            "UserPromptSubmit": 2,
+            "PreToolUse": 3,
+            "SubagentStart": 1,
+            "PostToolUse": 3,
+            "Stop": 2,
+            "SubagentStop": 1,
+            "SessionEnd": 1
+          },
+          "hook_deliveries": 14,
+          "hook_failures": 0,
+          "cli_results": [
+            {
+              "subtype": "success",
+              "is_error": false,
+              "num_turns": 3
+            },
+            {
+              "subtype": "success",
+              "is_error": false,
+              "num_turns": 1
+            }
+          ],
+          "witness_operations": [
+            "child",
+            "parent"
+          ],
+          "witness_complete": true,
+          "native_subagent_exercised": true,
+          "tools": [
+            {
+              "native_start_wall_ns": 1791376534541599728,
+              "native_end_wall_ns": 1791376534611206133,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791376534623234048,
+              "end_minus_native_end_seconds": 0.012027915,
+              "relay_end_reason": "async_launched",
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "toolu_bdrk_01DMExGoTqUNPCdWMkrquQ6B",
+              "tool_name": "Agent",
+              "agent_id": null
+            },
+            {
+              "native_start_wall_ns": 1791376534688385636,
+              "native_end_wall_ns": 1791376542866720343,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791376542878818048,
+              "end_minus_native_end_seconds": 0.012097705,
+              "relay_end_reason": null,
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "toolu_bdrk_01VbyNCU1ogJEPXZhXf44ZGh",
+              "tool_name": "Bash",
+              "agent_id": null,
+              "test_command": "python3 /configuration/oracle.py --operation parent --seconds 8",
+              "oracle_end_wall_ns": 1791376542811855355,
+              "oracle_cpu_seconds": 7.9760599050000005,
+              "relay_end_minus_work_end_seconds": 0.066962693,
+              "intentionally_detached": false
+            },
+            {
+              "native_start_wall_ns": 1791376537068603949,
+              "native_end_wall_ns": 1791376549208241459,
+              "relay_starts": 2,
+              "relay_ends": 2,
+              "relay_first_end_wall_ns": 1791376545322822144,
+              "end_minus_native_end_seconds": -3.885419315,
+              "relay_end_reason": "closed_by_turn_end",
+              "boundary_status": "early",
+              "duplicate_relay_spans": true,
+              "tool_id": "toolu_bdrk_011aDppRn87L8EUwgR2dkmvu",
+              "tool_name": "Bash",
+              "agent_id": "ab0806cd4a0da4948",
+              "test_command": "python3 /configuration/oracle.py --operation child --seconds 12",
+              "oracle_end_wall_ns": 1791376549158119801,
+              "oracle_cpu_seconds": 11.967385497,
+              "relay_end_minus_work_end_seconds": -3.835297657,
+              "intentionally_detached": false
+            }
+          ],
+          "subagents": [
+            {
+              "agent_id": "ab0806cd4a0da4948",
+              "native_start_wall_ns": 1791376534606903317,
+              "native_end_wall_ns": 1791376550716253579,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791376545322861056,
+              "end_minus_native_end_seconds": -5.393392523,
+              "relay_end_reason": "closed_by_turn_end",
+              "boundary_status": "early",
+              "duplicate_relay_spans": false
+            }
+          ],
+          "setup_valid": true,
+          "invocation_end_minus_work_end_seconds": 9.543671571,
+          "scenario_coverage_passed": true,
+          "concurrency_coverage": {
+            "parent_child_cpu_intervals_overlap": true,
+            "parent_stop_during_child_cpu_work": true,
+            "parent_stop_during_child_wall_ns": [
+              1791376545310931514
+            ],
+            "child_cpu_end_wall_ns": 1791376549158119801
+          },
+          "boundary_check_passed": false,
+          "conformance_passed": false,
+          "whole_sandbox_completion_validated": false
+        },
+        {
+          "case": "strict-failure",
+          "invocation": {
+            "harness": "claude",
+            "case": "failure",
+            "started_wall_ns": 1791377065042540519,
+            "ended_wall_ns": 1791377073422005758,
+            "exit_code": 0,
+            "timed_out": false
+          },
+          "native_hook_counts": {
+            "SessionStart": 1,
+            "UserPromptSubmit": 1,
+            "PreToolUse": 1,
+            "PostToolUseFailure": 1,
+            "Stop": 1,
+            "SessionEnd": 1
+          },
+          "hook_deliveries": 6,
+          "hook_failures": 0,
+          "cli_results": [
+            {
+              "subtype": "success",
+              "is_error": false,
+              "num_turns": 2
+            }
+          ],
+          "witness_operations": [
+            "failure"
+          ],
+          "witness_complete": true,
+          "native_subagent_exercised": false,
+          "tools": [
+            {
+              "native_start_wall_ns": 1791377069112882911,
+              "native_end_wall_ns": 1791377071290965983,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791377071302938112,
+              "end_minus_native_end_seconds": 0.011972129,
+              "relay_end_reason": "error",
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "toolu_bdrk_01QcziFcR5EpXhAXuAYsv6vw",
+              "tool_name": "Bash",
+              "agent_id": null,
+              "test_command": "python3 /configuration/oracle.py --operation failure --seconds 2 --exit-code 17",
+              "oracle_end_wall_ns": 1791377071238024206,
+              "oracle_cpu_seconds": 2.0011075220000003,
+              "relay_end_minus_work_end_seconds": 0.064913906,
+              "intentionally_detached": false
+            }
+          ],
+          "subagents": [],
+          "setup_valid": true,
+          "native_failed_tool_exercised": true,
+          "invocation_end_minus_work_end_seconds": 2.183981552,
+          "scenario_coverage_passed": true,
+          "boundary_check_passed": true,
+          "conformance_passed": true,
+          "whole_sandbox_completion_validated": false
+        },
+        {
+          "case": "strict-managed-background",
+          "invocation": {
+            "harness": "claude",
+            "case": "managed-background",
+            "started_wall_ns": 1791377077991768627,
+            "ended_wall_ns": 1791377092331719556,
+            "exit_code": 0,
+            "timed_out": false
+          },
+          "native_hook_counts": {
+            "SessionStart": 1,
+            "UserPromptSubmit": 1,
+            "PreToolUse": 1,
+            "PostToolUse": 1,
+            "Stop": 1
+          },
+          "hook_deliveries": 5,
+          "hook_failures": 0,
+          "cli_results": [
+            {
+              "subtype": "success",
+              "is_error": false,
+              "num_turns": 2
+            }
+          ],
+          "witness_operations": [
+            "managed-background"
+          ],
+          "witness_complete": false,
+          "native_subagent_exercised": false,
+          "tools": [
+            {
+              "native_start_wall_ns": 1791377085622971382,
+              "native_end_wall_ns": 1791377085727705181,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791377085739574784,
+              "end_minus_native_end_seconds": 0.011869603,
+              "relay_end_reason": null,
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "toolu_bdrk_01XfvLKT2uhSQvLnW6rSw81S",
+              "tool_name": "Bash",
+              "agent_id": null,
+              "test_command": "python3 /configuration/oracle.py --operation managed-background --seconds 20"
+            }
+          ],
+          "subagents": [],
+          "setup_valid": false,
+          "native_background_requested": true,
+          "scenario_coverage_passed": true,
+          "boundary_check_passed": true,
+          "conformance_passed": false,
+          "whole_sandbox_completion_validated": false
+        }
+      ]
+    },
+    {
+      "harness": "codex",
+      "versions": {
+        "harness": "codex",
+        "cli": "codex-cli 0.149.1",
+        "relay": "nemo-relay 0.9.4"
+      },
+      "raw_atof_event_count": 484,
+      "cases": [
+        {
+          "case": "baseline-background",
+          "invocation": {
+            "harness": "codex",
+            "case": "background",
+            "started_wall_ns": 1791376483603660433,
+            "ended_wall_ns": 1791376487676344961,
+            "exit_code": 0,
+            "timed_out": false
+          },
+          "native_hook_counts": {
+            "SessionStart": 1,
+            "UserPromptSubmit": 1,
+            "PreToolUse": 1,
+            "PostToolUse": 1,
+            "Stop": 1,
+            "SessionEnd": 1
+          },
+          "hook_deliveries": 6,
+          "hook_failures": 0,
+          "cli_results": [],
+          "witness_operations": [
+            "background"
+          ],
+          "witness_complete": true,
+          "native_subagent_exercised": false,
+          "tools": [
+            {
+              "native_start_wall_ns": 1791376485909700322,
+              "native_end_wall_ns": 1791376486144573899,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791376486158329088,
+              "end_minus_native_end_seconds": 0.013755189,
+              "relay_end_reason": null,
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "tooluse_7kerHMJQtJprunG11oM6nP",
+              "tool_name": "Bash",
+              "agent_id": null,
+              "test_command": "python3 /configuration/oracle.py --operation background --seconds 20 --background",
+              "oracle_end_wall_ns": 1791376506069318075,
+              "oracle_cpu_seconds": 19.997820244,
+              "relay_end_minus_work_end_seconds": -19.910988987,
+              "intentionally_detached": true
+            }
+          ],
+          "subagents": [],
+          "setup_valid": true,
+          "invocation_end_minus_work_end_seconds": -18.392973114,
+          "scenario_coverage_passed": true,
+          "boundary_check_passed": true,
+          "conformance_passed": true,
+          "whole_sandbox_completion_validated": false
+        },
+        {
+          "case": "baseline-failure",
+          "invocation": {
+            "harness": "codex",
+            "case": "failure",
+            "started_wall_ns": 1791376514037000584,
+            "ended_wall_ns": 1791376521617700601,
+            "exit_code": 0,
+            "timed_out": false
+          },
+          "native_hook_counts": {
+            "SessionStart": 1,
+            "UserPromptSubmit": 1,
+            "PreToolUse": 1,
+            "PostToolUse": 1,
+            "Stop": 1,
+            "SessionEnd": 1
+          },
+          "hook_deliveries": 6,
+          "hook_failures": 0,
+          "cli_results": [],
+          "witness_operations": [
+            "failure"
+          ],
+          "witness_complete": true,
+          "native_subagent_exercised": false,
+          "tools": [
+            {
+              "native_start_wall_ns": 1791376517242298897,
+              "native_end_wall_ns": 1791376519402307239,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791376519414640896,
+              "end_minus_native_end_seconds": 0.012333657,
+              "relay_end_reason": null,
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "tooluse_uYQoRAJiriS2NKSLNpeAQQ",
+              "tool_name": "Bash",
+              "agent_id": null,
+              "test_command": "python3 /configuration/oracle.py --operation failure --seconds 2 --exit-code 17; echo \"EXIT:$?\"",
+              "oracle_end_wall_ns": 1791376519353370823,
+              "oracle_cpu_seconds": 1.99999543,
+              "relay_end_minus_work_end_seconds": 0.061270073,
+              "intentionally_detached": false
+            }
+          ],
+          "subagents": [],
+          "setup_valid": false,
+          "native_failed_tool_exercised": false,
+          "invocation_end_minus_work_end_seconds": 2.264329778,
+          "scenario_coverage_passed": true,
+          "boundary_check_passed": true,
+          "conformance_passed": false,
+          "whole_sandbox_completion_validated": false
+        },
+        {
+          "case": "baseline-foreground",
+          "invocation": {
+            "harness": "codex",
+            "case": "foreground",
+            "started_wall_ns": 1791376437481443888,
+            "ended_wall_ns": 1791376450872182388,
+            "exit_code": 0,
+            "timed_out": false
+          },
+          "native_hook_counts": {
+            "SessionStart": 1,
+            "UserPromptSubmit": 1,
+            "PreToolUse": 1,
+            "PostToolUse": 1,
+            "Stop": 1,
+            "SessionEnd": 1
+          },
+          "hook_deliveries": 6,
+          "hook_failures": 0,
+          "cli_results": [],
+          "witness_operations": [
+            "foreground"
+          ],
+          "witness_complete": true,
+          "native_subagent_exercised": false,
+          "tools": [
+            {
+              "native_start_wall_ns": 1791376440648222317,
+              "native_end_wall_ns": 1791376448805382002,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791376448817539072,
+              "end_minus_native_end_seconds": 0.01215707,
+              "relay_end_reason": null,
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "tooluse_VHgFP7XBnjTo2uOyaDBYXg",
+              "tool_name": "Bash",
+              "agent_id": null,
+              "test_command": "python3 /configuration/oracle.py --operation foreground --seconds 8",
+              "oracle_end_wall_ns": 1791376448756725204,
+              "oracle_cpu_seconds": 7.999247284000001,
+              "relay_end_minus_work_end_seconds": 0.060813868,
+              "intentionally_detached": false
+            }
+          ],
+          "subagents": [],
+          "setup_valid": true,
+          "invocation_end_minus_work_end_seconds": 2.115457184,
+          "scenario_coverage_passed": true,
+          "boundary_check_passed": true,
+          "conformance_passed": true,
+          "whole_sandbox_completion_validated": false
+        },
+        {
+          "case": "baseline-subagent",
+          "invocation": {
+            "harness": "codex",
+            "case": "subagent",
+            "started_wall_ns": 1791376526271848249,
+            "ended_wall_ns": 1791376550285740149,
+            "exit_code": 0,
+            "timed_out": false
+          },
+          "native_hook_counts": {
+            "SessionStart": 1,
+            "UserPromptSubmit": 2,
+            "PreToolUse": 4,
+            "PostToolUse": 4,
+            "SubagentStart": 1,
+            "SubagentStop": 1,
+            "Stop": 1,
+            "SessionEnd": 1
+          },
+          "hook_deliveries": 15,
+          "hook_failures": 0,
+          "cli_results": [],
+          "witness_operations": [
+            "child",
+            "parent"
+          ],
+          "witness_complete": true,
+          "native_subagent_exercised": true,
+          "tools": [
+            {
+              "native_start_wall_ns": 1791376531049211795,
+              "native_end_wall_ns": 1791376531146314495,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791376531158846976,
+              "end_minus_native_end_seconds": 0.012532481,
+              "relay_end_reason": null,
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "tooluse_FNo5TKm4OjB41gVksbOXbR",
+              "tool_name": "spawn_agent",
+              "agent_id": null
+            },
+            {
+              "native_start_wall_ns": 1791376531206021947,
+              "native_end_wall_ns": 1791376539365356539,
+              "relay_starts": 2,
+              "relay_ends": 2,
+              "relay_first_end_wall_ns": 1791376531235422976,
+              "end_minus_native_end_seconds": -8.129933563,
+              "relay_end_reason": "superseded_by_next_turn",
+              "boundary_status": "early",
+              "duplicate_relay_spans": true,
+              "tool_id": "tooluse_Nf8kHHxCQHaB4lfp9hsXNa",
+              "tool_name": "Bash",
+              "agent_id": null,
+              "test_command": "python3 /configuration/oracle.py --operation parent --seconds 8",
+              "oracle_end_wall_ns": 1791376539308591303,
+              "oracle_cpu_seconds": 7.958404532,
+              "relay_end_minus_work_end_seconds": -8.073168327,
+              "intentionally_detached": false
+            },
+            {
+              "native_start_wall_ns": 1791376533695366771,
+              "native_end_wall_ns": 1791376545826572913,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791376545839169024,
+              "end_minus_native_end_seconds": 0.012596111,
+              "relay_end_reason": null,
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "tooluse_p6BPwv2byaFsi39OtwQPpJ",
+              "tool_name": "Bash",
+              "agent_id": "01a1165c-9e81-7631-9f3b-bd70ddca1d40",
+              "test_command": "python3 /configuration/oracle.py --operation child --seconds 12",
+              "oracle_end_wall_ns": 1791376545778519368,
+              "oracle_cpu_seconds": 11.967567052,
+              "relay_end_minus_work_end_seconds": 0.060649656,
+              "intentionally_detached": false
+            },
+            {
+              "native_start_wall_ns": 1791376541632936690,
+              "native_end_wall_ns": 1791376547602444197,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791376547614839040,
+              "end_minus_native_end_seconds": 0.012394843,
+              "relay_end_reason": null,
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "tooluse_X647buPNHIrFETDW48IoBF",
+              "tool_name": "multi_agent_v1wait_agent",
+              "agent_id": null
+            }
+          ],
+          "subagents": [
+            {
+              "agent_id": "01a1165c-9e81-7631-9f3b-bd70ddca1d40",
+              "native_start_wall_ns": 1791376531163568091,
+              "native_end_wall_ns": 1791376547545132971,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791376531235478016,
+              "end_minus_native_end_seconds": -16.309654955,
+              "relay_end_reason": "superseded_by_next_turn",
+              "boundary_status": "early",
+              "duplicate_relay_spans": false
+            }
+          ],
+          "setup_valid": true,
+          "invocation_end_minus_work_end_seconds": 4.507220781,
+          "scenario_coverage_passed": true,
+          "concurrency_coverage": {
+            "parent_child_cpu_intervals_overlap": true,
+            "parent_stop_during_child_cpu_work": false,
+            "parent_stop_during_child_wall_ns": [],
+            "child_cpu_end_wall_ns": 1791376545778519368
+          },
+          "boundary_check_passed": false,
+          "conformance_passed": false,
+          "whole_sandbox_completion_validated": false
+        },
+        {
+          "case": "strict-failure",
+          "invocation": {
+            "harness": "codex",
+            "case": "failure",
+            "started_wall_ns": 1791377065045428476,
+            "ended_wall_ns": 1791377074378707976,
+            "exit_code": 0,
+            "timed_out": false
+          },
+          "native_hook_counts": {
+            "SessionStart": 1,
+            "UserPromptSubmit": 1,
+            "PreToolUse": 1,
+            "PostToolUse": 1,
+            "Stop": 1,
+            "SessionEnd": 1
+          },
+          "hook_deliveries": 6,
+          "hook_failures": 0,
+          "cli_results": [],
+          "witness_operations": [
+            "failure"
+          ],
+          "witness_complete": true,
+          "native_subagent_exercised": false,
+          "tools": [
+            {
+              "native_start_wall_ns": 1791377069806981681,
+              "native_end_wall_ns": 1791377071955227765,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "relay_first_end_wall_ns": 1791377071967516928,
+              "end_minus_native_end_seconds": 0.012289163,
+              "relay_end_reason": null,
+              "boundary_status": "aligned",
+              "duplicate_relay_spans": false,
+              "tool_id": "tooluse_qvPADNTdjH7as649VfD9OB",
+              "tool_name": "Bash",
+              "agent_id": null,
+              "test_command": "python3 /configuration/oracle.py --operation failure --seconds 2 --exit-code 17",
+              "oracle_end_wall_ns": 1791377071906326912,
+              "oracle_cpu_seconds": 2.000407569,
+              "relay_end_minus_work_end_seconds": 0.061190016,
+              "intentionally_detached": false
+            }
+          ],
+          "subagents": [],
+          "setup_valid": true,
+          "native_failed_tool_exercised": true,
+          "invocation_end_minus_work_end_seconds": 2.472381064,
+          "scenario_coverage_passed": true,
+          "boundary_check_passed": true,
+          "conformance_passed": true,
+          "whole_sandbox_completion_validated": false
+        },
+        {
+          "case": "strict-managed-background",
+          "invocation": {
+            "harness": "codex",
+            "case": "managed-background",
+            "started_wall_ns": 1791377078668383492,
+            "ended_wall_ns": 1791377084694594612,
+            "exit_code": 0,
+            "timed_out": false
+          },
+          "native_hook_counts": {
+            "SessionStart": 1,
+            "UserPromptSubmit": 1,
+            "PreToolUse": 1,
+            "Stop": 1,
+            "SessionEnd": 1
+          },
+          "hook_deliveries": 5,
+          "hook_failures": 0,
+          "cli_results": [],
+          "witness_operations": [
+            "managed-background"
+          ],
+          "witness_complete": false,
+          "native_subagent_exercised": false,
+          "tools": [
+            {
+              "native_start_wall_ns": 1791377080864720085,
+              "native_end_wall_ns": null,
+              "relay_starts": 1,
+              "relay_ends": 1,
+              "boundary_status": "inconclusive_missing_native_end",
+              "tool_id": "tooluse_9zndLeAUyJ3BI4m2XL6WL8",
+              "tool_name": "Bash",
+              "agent_id": null,
+              "test_command": "python3 /configuration/oracle.py --operation managed-background --seconds 20"
+            }
+          ],
+          "subagents": [],
+          "setup_valid": false,
+          "native_background_requested": null,
+          "scenario_coverage_passed": true,
+          "boundary_check_passed": false,
+          "conformance_passed": false,
+          "whole_sandbox_completion_validated": false
+        }
+      ]
+    }
+  ]
+}

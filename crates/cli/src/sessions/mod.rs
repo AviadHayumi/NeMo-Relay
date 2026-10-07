@@ -67,9 +67,9 @@ const ROUTING_IDENTITY_HEADERS: &[&str] = &[
 /// Arguments a request intercept rewrote, on their way back to the agent that will execute them.
 ///
 /// The gateway cannot apply a transform itself -- it never runs the tool -- so the rewrite has to
-/// travel back in the hook response and be applied by the extension. One pi hook post carries at
-/// most one `tool_call`, so a single value is enough; `tool_call_id` lets the receiver assert the
-/// response belongs to the call it just sent.
+/// travel back in the hook response and be applied by the harness. One pre-tool hook post carries
+/// at most one tool call, so a single value is enough; pi additionally echoes `tool_call_id` to
+/// let its extension check that the response belongs to the call it just sent.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ToolArgumentTransform {
     pub(crate) tool_call_id: String,
@@ -78,8 +78,7 @@ pub(crate) struct ToolArgumentTransform {
 
 /// What one batch of hook events produced that the HTTP response still has to carry.
 ///
-/// Empty for every agent except pi, and empty for pi unless a request intercept actually changed
-/// the arguments.
+/// Empty unless a supported harness's request intercept actually changed the arguments.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct HookEffects {
     pub(crate) tool_argument_transform: Option<ToolArgumentTransform>,
@@ -503,6 +502,9 @@ struct ActiveTool {
     handle: ToolHandle,
     name: String,
     arguments: Value,
+    // Retained only when middleware changed the request, so an active-call retry can replay
+    // that exact decision without executing middleware twice or accepting conflicting input.
+    original_arguments: Option<Value>,
     owner_subagent_id: Option<String>,
 }
 
@@ -615,10 +617,10 @@ impl SessionManager {
         headers: &HeaderMap,
         events: Vec<NormalizedEvent>,
         owner: &str,
-    ) -> Result<(), CliError> {
+    ) -> Result<HookEffects, CliError> {
         let activity = self.session_activity.begin();
         if self.session_activity.is_closing() {
-            return Ok(());
+            return Ok(HookEffects::default());
         }
         let owners = self.authenticated_owners.lock().await;
         let mut reservations = self.authenticated_reservations.lock().await;
@@ -662,7 +664,7 @@ impl SessionManager {
             .await;
 
         match result {
-            Ok(_effects) => {
+            Ok(effects) => {
                 let mut owners = self.authenticated_owners.lock().await;
                 for session_id in reservation.session_ids() {
                     owners
@@ -671,7 +673,7 @@ impl SessionManager {
                 }
                 drop(owners);
                 reservation.release().await;
-                Ok(())
+                Ok(effects)
             }
             Err(error) => {
                 self.bind_retained_session_owners(reservation.session_ids(), owner)
@@ -1672,6 +1674,7 @@ impl Session {
             && self.active_gateway_calls == 0
             && self.llms.is_empty()
             && self.tools.is_empty()
+            && self.subagents.is_empty()
             && now.duration_since(self.last_activity) >= timeout
     }
 
@@ -1919,7 +1922,20 @@ impl Session {
         &mut self,
         event: SessionEvent,
     ) -> Result<Option<SubscriberDelivery>, CliError> {
-        if alignment::aliased_turn_subagent_id(&event).is_some() {
+        if let Some(subagent_id) = alignment::aliased_turn_subagent_id(&event) {
+            if let Some(parent) = self.subagents.get(&subagent_id) {
+                let mut metadata = event.metadata;
+                self.insert_agent_version(&mut metadata);
+                emit_mark_event(
+                    EmitMarkEventParams::builder()
+                        .name("prompt_submitted")
+                        .parent(parent)
+                        .data(event.payload)
+                        .metadata(metadata)
+                        .build(),
+                )?;
+                return Ok(None);
+            }
             self.ensure_turn_started(event.metadata.clone())?;
             self.mark("prompt_submitted", event)?;
             return Ok(None);
@@ -1987,7 +2003,17 @@ impl Session {
     }
 
     fn ensure_turn_started_for_gateway(&mut self, start: &LlmGatewayStart) -> Result<(), CliError> {
-        if self.turn_scope.is_some() {
+        let known_child_affinity = alignment::request_affinity_key(&start.provider, &start.request)
+            .and_then(|key| self.llm_request_affinity.get(&key))
+            .and_then(Option::as_ref)
+            .is_some_and(|id| self.subagents.contains_key(id));
+        if self.turn_scope.is_some()
+            || start
+                .subagent_id
+                .as_ref()
+                .is_some_and(|id| self.subagents.contains_key(id))
+            || known_child_affinity
+        {
             return Ok(());
         }
         if let Some(input) =
@@ -2169,6 +2195,11 @@ impl Session {
         boundary_metadata: Option<Value>,
         reason: &str,
     ) -> Result<(Vec<String>, Option<SubscriberDelivery>), CliError> {
+        // A parent turn boundary does not finish independently running children. Their separate
+        // scope stacks retain the original parent handle, even after this turn scope is popped.
+        // Explicit session end and daemon shutdown still force cleanup of every owned scope.
+        let preserve_children = matches!(self.agent_kind, AgentKind::ClaudeCode | AgentKind::Codex)
+            && matches!(reason, "closed_by_turn_end" | "superseded_by_next_turn");
         // Active spans are closed before the turn check, not after it.
         //
         // A tool span does not always live under a turn. `ensure_tool_scope_started` parents
@@ -2181,15 +2212,19 @@ impl Session {
         //
         // All three closers drain empty collections, so running them with no turn open costs
         // nothing when there is nothing to close.
-        self.close_active_llms(reason).await?;
-        self.close_active_tools(reason).await?;
-        let closed_subagents = self.close_active_subagents(reason).await?;
+        self.close_active_llms(reason, preserve_children).await?;
+        self.close_active_tools(reason, preserve_children).await?;
+        let closed_subagents = if preserve_children {
+            Vec::new()
+        } else {
+            self.close_active_subagents(reason).await?
+        };
         if self.turn_scope.is_none() {
-            self.clear_correlation_state();
+            self.clear_turn_correlation_state(preserve_children);
             return Ok((closed_subagents, None));
         }
         let output = self.last_turn_llm_output.take().unwrap_or(output);
-        self.clear_correlation_state();
+        self.clear_turn_correlation_state(preserve_children);
         let subscriber_delivery = self.close_turn_scope(output, boundary_metadata)?;
         Ok((closed_subagents, subscriber_delivery))
     }
@@ -2200,7 +2235,11 @@ impl Session {
         &mut self,
         event: SessionEvent,
     ) -> Result<Option<SubscriberDelivery>, CliError> {
-        if !self.session_started && self.agent_scope.is_none() && self.turn_scope.is_none() {
+        if !self.session_started
+            && self.agent_scope.is_none()
+            && self.turn_scope.is_none()
+            && !self.blocks_plugin_idle_shutdown()
+        {
             return Ok(None);
         }
         let (_, turn_delivery) = self.close_turn_for_reason("closed_by_agent_end").await?;
@@ -2254,7 +2293,10 @@ impl Session {
         let payload = json!({ "status": reason });
         TASK_SCOPE_STACK
             .scope(stack, async move {
-                if self.agent_scope.is_none() && self.turn_scope.is_none() {
+                if self.agent_scope.is_none()
+                    && self.turn_scope.is_none()
+                    && !self.blocks_plugin_idle_shutdown()
+                {
                     return Ok(());
                 }
                 let _ = self.close_turn_for_reason(reason).await?;
@@ -2267,8 +2309,22 @@ impl Session {
     }
 
     // Ends all active hook-observed LLM calls before closing their containing scopes.
-    async fn close_active_llms(&mut self, reason: &str) -> Result<(), CliError> {
-        let active_llms: Vec<_> = self.llms.drain().map(|(_, handle)| handle).collect();
+    async fn close_active_llms(
+        &mut self,
+        reason: &str,
+        preserve_children: bool,
+    ) -> Result<(), CliError> {
+        let child_uuids: HashSet<_> = self.subagents.values().map(|scope| scope.uuid).collect();
+        let active_llms: Vec<_> = self
+            .llms
+            .extract_if(|_, handle| {
+                !preserve_children
+                    || !handle
+                        .parent_uuid
+                        .is_some_and(|id| child_uuids.contains(&id))
+            })
+            .map(|(_, handle)| handle)
+            .collect();
         for handle in active_llms {
             llm_call_end(
                 LlmCallEndParams::builder()
@@ -2283,10 +2339,14 @@ impl Session {
 
     // Ends all active tool calls with a synthetic close result before ending their containing scopes.
     // Draining first avoids holding mutable map state while the runtime emits lifecycle events.
-    async fn close_active_tools(&mut self, reason: &str) -> Result<(), CliError> {
+    async fn close_active_tools(
+        &mut self,
+        reason: &str,
+        preserve_children: bool,
+    ) -> Result<(), CliError> {
         let active_tools: Vec<_> = self
             .tools
-            .drain()
+            .extract_if(|_, active| !preserve_children || active.owner_subagent_id.is_none())
             .map(|(_, active)| active.handle)
             .collect();
         for handle in active_tools {
@@ -2325,6 +2385,29 @@ impl Session {
         self.pending_tool_hints.clear();
         self.llm_request_affinity.clear();
         self.last_llm_owner = None;
+    }
+
+    fn clear_turn_correlation_state(&mut self, preserve_children: bool) {
+        if !preserve_children {
+            self.clear_correlation_state();
+            return;
+        }
+        // A session-global guess must not attribute a new parent request to an old child.
+        // Keep only child tool identifiers and deterministic child request affinities.
+        self.pending_llm_hints.clear();
+        self.last_llm_owner = None;
+        self.pending_tool_hints.retain(|pending| {
+            pending
+                .hint
+                .subagent_id
+                .as_ref()
+                .is_some_and(|id| self.subagents.contains_key(id))
+        });
+        self.llm_request_affinity.retain(|_, owner| {
+            owner
+                .as_ref()
+                .is_some_and(|id| self.subagents.contains_key(id))
+        });
     }
 
     // Ends the root agent scope when present. Duplicate agent-end hooks can reach this path after the
@@ -2385,10 +2468,10 @@ impl Session {
     // parentage sibling-shaped within a turn while still allowing parallel workers to end out of
     // order.
     async fn start_subagent(&mut self, event: SubagentEvent) -> Result<(), CliError> {
-        self.ensure_turn_started(event.metadata.clone())?;
         if self.subagents.contains_key(&event.subagent_id) {
             return Ok(());
         }
+        self.ensure_turn_started(event.metadata.clone())?;
         let has_parallel_sibling = !self.subagents.is_empty();
         let parent_scope = self
             .turn_scope
@@ -2433,7 +2516,7 @@ impl Session {
 
     // Ends a subagent by id. Unknown endings usually become mark events, while duplicate endings for
     // a subagent already closed by another provider-specific completion signal are ignored. Claude
-    // Code can also report late orphan stops after a turn has closed; those are logged and ignored
+    // Code and Codex can report late orphan stops after a turn has closed; those are logged and ignored
     // when there is no active turn so they cannot create lifecycle-only traces.
     async fn end_subagent(
         &mut self,
@@ -2451,7 +2534,9 @@ impl Session {
                 lifecycle_event = event.event_name.as_str();
                 "Subagent lifecycle event had no matching start"
             );
-            if self.agent_kind == AgentKind::ClaudeCode && self.turn_scope.is_none() {
+            if matches!(self.agent_kind, AgentKind::ClaudeCode | AgentKind::Codex)
+                && self.turn_scope.is_none()
+            {
                 return Ok(None);
             }
             self.mark(
@@ -2466,7 +2551,6 @@ impl Session {
             )?;
             return Ok(None);
         };
-        self.ensure_turn_started(event.metadata.clone())?;
         self.close_subagent_scope(&event.subagent_id, event.payload)
             .await
     }
@@ -2482,6 +2566,27 @@ impl Session {
         let Some(scope) = self.subagents.remove(subagent_id) else {
             return Ok(None);
         };
+        let unresolved_tools = self
+            .tools
+            .values()
+            .filter(|tool| tool.owner_subagent_id.as_deref() == Some(subagent_id))
+            .count();
+        let unresolved_llms = self
+            .llms
+            .values()
+            .filter(|llm| llm.parent_uuid == Some(scope.uuid))
+            .count();
+        if unresolved_tools > 0 || unresolved_llms > 0 {
+            log::warn!(
+                target: "nemo_relay.session",
+                event = "subagent_completion_with_unresolved_work",
+                session_id = self.session_id.as_str(),
+                subagent_id = subagent_id,
+                unresolved_tools = unresolved_tools,
+                unresolved_llms = unresolved_llms;
+                "Subagent ended with missing work-completion events; retaining outstanding work until its own completion or explicit shutdown"
+            );
+        }
         let stack = self
             .subagent_stacks
             .remove(subagent_id)
@@ -2516,7 +2621,14 @@ impl Session {
     // Stores an LLM correlation hint from hook activity after pruning expired hints. Hints do not
     // emit runtime events themselves; they are consumed by the next matching gateway LLM call.
     fn add_llm_hint(&mut self, event: LlmHintEvent) -> Result<(), CliError> {
-        self.ensure_turn_started(event.metadata.clone())?;
+        if !event
+            .subagent_id
+            .as_ref()
+            .or(event.agent_id.as_ref())
+            .is_some_and(|id| self.subagents.contains_key(id))
+        {
+            self.ensure_turn_started(event.metadata.clone())?;
+        }
         self.cleanup_correlation_state();
         let owner_subagent_id = event.subagent_id.clone().or_else(|| event.agent_id.clone());
         self.add_tool_hints_from_llm_response(event.payload.clone(), owner_subagent_id);
@@ -2531,9 +2643,24 @@ impl Session {
     // scope. Duplicate tool IDs are ignored so repeated pre-tool hooks do not create parallel
     // handles for one agent tool invocation.
     async fn start_tool(&mut self, event: ToolEvent) -> Result<(), CliError> {
-        self.ensure_tool_scope_started(event.metadata.clone())?;
-        if self.tools.contains_key(&event.tool_call_id) {
+        if let Some(active) = self.tools.get(&event.tool_call_id) {
+            if let Some(original) = &active.original_arguments {
+                if active.name != event.tool_name
+                    || (event.arguments != *original && event.arguments != active.arguments)
+                {
+                    return Err(CliError::InvalidPayload(
+                        "repeated transformed tool call has conflicting input".into(),
+                    ));
+                }
+                self.tool_argument_transform = Some(ToolArgumentTransform {
+                    tool_call_id: event.tool_call_id,
+                    arguments: active.arguments.clone(),
+                });
+            }
             return Ok(());
+        }
+        if self.tool_event_owner_subagent_id(&event).is_none() {
+            self.ensure_tool_scope_started(event.metadata.clone())?;
         }
         let owner = self.resolve_tool_owner(&event);
         let arguments = if event.arguments.is_null() {
@@ -2561,14 +2688,22 @@ impl Session {
         // twice, emitting two guardrail scope pairs and billing an LLM-judge guardrail twice for
         // one call.
         let mut rewrite = None;
+        let mut original_arguments = None;
         let arguments = if self.agent_kind.applies_tool_argument_transforms() {
             let transformed =
                 tool_request_intercepts(event.tool_name.as_str(), arguments.clone()).await?;
             if transformed != arguments {
+                if self.agent_kind == AgentKind::ClaudeCode && !transformed.is_object() {
+                    return Err(CliError::InvalidPayload(
+                        "Claude Code tool request intercepts must return a complete input object"
+                            .into(),
+                    ));
+                }
                 rewrite = Some(ToolArgumentTransform {
                     tool_call_id: event.tool_call_id.clone(),
                     arguments: transformed.clone(),
                 });
+                original_arguments = Some(arguments.clone());
             }
             transformed
         } else {
@@ -2602,6 +2737,7 @@ impl Session {
                 handle,
                 name: active_tool_name,
                 arguments: active_tool_arguments,
+                original_arguments,
                 owner_subagent_id: active_tool_owner_subagent_id,
             },
         );
@@ -2641,14 +2777,19 @@ impl Session {
     // Ends a tool call, synthesizing a start if no matching handle exists. This keeps post-only
     // hooks observable and preserves the final result/status instead of dropping orphaned endings.
     async fn end_tool(&mut self, event: ToolEvent) -> Result<Option<SubscriberDelivery>, CliError> {
-        self.ensure_tool_scope_started(event.metadata.clone())?;
+        // Reconcile both exact IDs and supported name/argument matches before opening a turn.
+        // A retained child's late result can carry a different ID after that child has ended.
+        let retained_handle = self.remove_tool_handle_for_event(&event);
+        if retained_handle.is_none() && self.tool_event_owner_subagent_id(&event).is_none() {
+            self.ensure_tool_scope_started(event.metadata.clone())?;
+        }
         let event_metadata = self.event_identity_metadata(event.metadata.clone());
         let completed_agent_subagent_id = alignment::completed_subagent_from_tool(&event);
         let explicit_subagent_id = event
             .subagent_id
             .clone()
             .filter(|subagent_id| self.subagents.contains_key(subagent_id));
-        let handle = match self.remove_tool_handle_for_event(&event) {
+        let handle = match retained_handle {
             Some(handle) => handle,
             None => {
                 let owner = self.resolve_tool_owner(&event);
@@ -2760,8 +2901,15 @@ impl Session {
     // report one, and for it a mark arriving between turns is genuinely between turns -- run-level
     // events such as `agent_end` and `agent_settled` trail the last `turn_end`, and opening a turn
     // for them produced an empty turn scope at the end of every run.
+    // Passive native snapshots and uncorrelated failures also must not invent a user turn.
     fn mark(&mut self, name: &str, event_payload: SessionEvent) -> Result<(), CliError> {
-        if self.agent_kind.has_explicit_turn_start() {
+        if self.agent_kind.has_explicit_turn_start()
+            || event_payload
+                .metadata
+                .get("nemo_relay_observation_only")
+                .and_then(Value::as_bool)
+                == Some(true)
+        {
             self.ensure_agent_started(event_payload.metadata.clone())?;
         } else {
             self.ensure_turn_started(event_payload.metadata.clone())?;
@@ -2893,6 +3041,10 @@ impl Session {
     fn sticky_llm_owner(&self) -> Option<LlmOwnerResolution> {
         if let Some(owner) = self.last_llm_owner.as_ref()
             && let Some(parent) = self.subagents.get(&owner.subagent_id).cloned()
+            && self
+                .turn_scope
+                .as_ref()
+                .is_none_or(|turn| parent.parent_uuid == Some(turn.uuid))
         {
             return Some(LlmOwnerResolution {
                 parent: Some(parent),
@@ -2912,6 +3064,10 @@ impl Session {
     fn sole_subagent_owner(&mut self) -> Option<LlmOwnerResolution> {
         if self.subagents.len() == 1
             && let Some((subagent_id, scope)) = self.subagents.iter().next()
+            && self
+                .turn_scope
+                .as_ref()
+                .is_none_or(|turn| scope.parent_uuid == Some(turn.uuid))
         {
             let subagent_id = subagent_id.clone();
             let scope = scope.clone();

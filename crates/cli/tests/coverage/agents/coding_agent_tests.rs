@@ -19,7 +19,7 @@ fn agent_descriptors_are_complete_and_unique() {
     );
     assert_eq!(CodingAgent::ClaudeCode.label(), "Claude Code");
     assert_eq!(CodingAgent::Codex.label(), "Codex");
-    assert_eq!(CodingAgent::ClaudeCode.hook_events().len(), 14);
+    assert_eq!(CodingAgent::ClaudeCode.hook_events().len(), 15);
     assert_eq!(CodingAgent::Codex.hook_events().len(), 10);
     assert_eq!(CodingAgent::Pi.label(), "pi");
     assert_eq!(CodingAgent::Pi.hook_events().len(), 15);

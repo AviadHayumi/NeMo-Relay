@@ -26,9 +26,13 @@ The package contains these files:
 
 The bundle forwards `SessionStart`, `SessionEnd`, `UserPromptSubmit`,
 `UserPromptExpansion`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`,
-`PermissionRequest`, `SubagentStart`, `SubagentStop`, `Notification`, `Stop`,
+`PermissionRequest`, `SubagentStart`, `SubagentStop`, `Notification`, `Stop`, `StopFailure`,
 `PreCompact`, and `PostCompact` as scope, tool, mark, or private LLM
 correlation events.
+
+`StopFailure` is an observation-only error mark. It neither opens a new turn nor
+closes active parent work, because the hook can identify an internal helper or
+background child error with the parent's session id.
 
 The bundle requires Claude Code 2.1.121 or newer. That version provides the
 `alwaysLoad` MCP startup barrier used to make Relay ready before session hooks
