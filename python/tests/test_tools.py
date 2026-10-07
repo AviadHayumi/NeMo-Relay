@@ -6,6 +6,7 @@
 import asyncio
 import contextvars
 import gc
+import traceback
 import warnings
 from collections import UserDict, UserList
 from collections.abc import Awaitable
@@ -259,16 +260,21 @@ class TestToolsAsync:
         events = []
         subscribers.register("py_tool_exec_failure_sub", lambda e: events.append(e))
 
-        def failing(_args: Json) -> Never:
-            raise ValueError("boom")
+        raised: list[ValueError] = []
 
-        with pytest.raises(RuntimeError, match="boom"):
+        def failing(_args: Json) -> Never:
+            error = ValueError("boom")
+            raised.append(error)
+            raise error
+
+        with pytest.raises(ValueError, match="boom") as error:
             await tools.execute(
                 "failing_tool",
                 {"x": 1},
                 failing,
                 tool_call_id="managed-failure-123",
             )
+        assert error.value is raised[0]
 
         try:
             await subscribers.flush_async()
@@ -287,6 +293,37 @@ class TestToolsAsync:
         assert events[1].data is None
         assert events[1].metadata["error.type"] == "internal_error"
         assert events[1].metadata["exception.type"] == "ValueError"
+
+    async def test_execute_propagates_cancelled_error_raised_by_func(self) -> None:
+        async def cancelling(_args: Json) -> Never:
+            raise asyncio.CancelledError("callback cancelled itself")
+
+        with pytest.raises(asyncio.CancelledError):
+            await tools.execute("cancelling_tool", {}, cancelling)
+
+        current = asyncio.current_task()
+        assert current is not None and current.cancelling() == 0
+
+    async def test_execute_rewraps_stop_iteration_raised_by_coroutine(self) -> None:
+        async def stopping(_args: Json) -> Never:
+            raise StopIteration("done")
+
+        with pytest.raises(RuntimeError) as error:
+            await tools.execute("stopping_tool", {}, stopping)
+
+        assert isinstance(error.value.__cause__, StopIteration)
+
+    async def test_execute_reraises_with_original_traceback_and_no_chaining(self) -> None:
+        def deep() -> Never:
+            raise ValueError("deep")
+
+        with pytest.raises(ValueError) as error:
+            await tools.execute("deep_tool", {}, lambda _args: deep())
+
+        frames = [frame.name for frame in traceback.extract_tb(error.value.__traceback__)]
+        assert "deep" in frames
+        assert error.value.__cause__ is None
+        assert error.value.__context__ is None
 
 
 class TestToolGuardrails:
@@ -483,6 +520,35 @@ class TestToolIntercepts:
         )
         assert intercepts.deregister_tool_execution("py_exec_int")
 
+    async def test_execution_intercept_next_raises_original_exception(self) -> None:
+        class ToolFailure(ValueError):
+            pass
+
+        raised: list[ToolFailure] = []
+        seen: list[BaseException] = []
+
+        def failing(_args: Json) -> Never:
+            error = ToolFailure("boom")
+            raised.append(error)
+            raise error
+
+        async def observing_intercept(context, next_call):
+            try:
+                return await next_call(context.args)
+            except ToolFailure as error:
+                seen.append(error)
+                raise
+
+        intercepts.register_tool_execution("py_exec_next_raise", 1, observing_intercept)
+        try:
+            with pytest.raises(ToolFailure, match="boom") as error:
+                await tools.execute("next_raise_tool", {"x": 1}, failing)
+        finally:
+            assert intercepts.deregister_tool_execution("py_exec_next_raise")
+
+        assert seen == raised
+        assert error.value is raised[0]
+
     async def test_execution_intercept_receives_tool_call_id(self) -> None:
         seen = {}
 
@@ -534,10 +600,43 @@ class TestToolIntercepts:
     def test_request_intercept_raises_on_exception(self) -> None:
         intercepts.register_tool_request("py_req_raise", 1, False, lambda n, a: raise_runtime_error("boom"))
         try:
-            with pytest.raises(RuntimeError, match="RuntimeError: boom"):
+            with pytest.raises(RuntimeError, match="^boom$"):
                 tools.request_intercepts("raise_tool", {"value": 1})
         finally:
             intercepts.deregister_tool_request("py_req_raise")
+
+    def test_request_intercept_raises_original_exception_outside_event_loop(self) -> None:
+        class InterceptFailure(ValueError):
+            pass
+
+        raised: list[InterceptFailure] = []
+
+        def failing(_name, _args) -> Never:
+            error = InterceptFailure("boom")
+            raised.append(error)
+            raise error
+
+        intercepts.register_tool_request("py_req_raise_original", 1, False, failing)
+        try:
+            with pytest.raises(InterceptFailure, match="^boom$") as error:
+                tools.request_intercepts("raise_tool", {"value": 1})
+        finally:
+            intercepts.deregister_tool_request("py_req_raise_original")
+
+        assert error.value is raised[0]
+
+    def test_request_intercept_propagates_system_exit_outside_event_loop(self) -> None:
+        def exiting(_name, _args) -> Never:
+            raise SystemExit(3)
+
+        intercepts.register_tool_request("py_req_system_exit", 1, False, exiting)
+        try:
+            with pytest.raises(SystemExit) as error:
+                tools.request_intercepts("exit_tool", {})
+        finally:
+            intercepts.deregister_tool_request("py_req_system_exit")
+
+        assert error.value.code == 3
 
     def test_request_intercept_raises_on_unserializable_return(self) -> None:
         intercepts.register_tool_request(
@@ -1070,7 +1169,27 @@ class TestToolGuardrailsEdgeCases:
             lambda name, args: raise_runtime_error("boom"),
         )
         try:
-            with pytest.raises(RuntimeError, match="RuntimeError: boom"):
+            with pytest.raises(RuntimeError, match="^boom$"):
                 tools.conditional_execution("error_tool", {})
         finally:
             guardrails.deregister_tool_conditional_execution("py_cond_error")
+
+    def test_conditional_execution_raises_original_exception_outside_event_loop(self) -> None:
+        class GuardrailFailure(ValueError):
+            pass
+
+        raised: list[GuardrailFailure] = []
+
+        def failing(_name, _args) -> Never:
+            error = GuardrailFailure("boom")
+            raised.append(error)
+            raise error
+
+        guardrails.register_tool_conditional_execution("py_cond_error_original", 1, failing)
+        try:
+            with pytest.raises(GuardrailFailure, match="^boom$") as error:
+                tools.conditional_execution("error_tool", {})
+        finally:
+            guardrails.deregister_tool_conditional_execution("py_cond_error_original")
+
+        assert error.value is raised[0]

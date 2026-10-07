@@ -639,10 +639,30 @@ class TestLLMGuardrails:
             lambda request: raise_runtime_error("boom"),
         )
         try:
-            with pytest.raises(RuntimeError, match="RuntimeError: boom"):
+            with pytest.raises(RuntimeError, match="^boom$"):
                 llm.conditional_execution(make_request())
         finally:
             guardrails.deregister_llm_conditional_execution("py_llm_cond_error")
+
+    def test_conditional_execution_raises_original_exception_outside_event_loop(self) -> None:
+        class GuardrailFailure(ValueError):
+            pass
+
+        raised: list[GuardrailFailure] = []
+
+        def failing(_request) -> Never:
+            error = GuardrailFailure("boom")
+            raised.append(error)
+            raise error
+
+        guardrails.register_llm_conditional_execution("py_llm_cond_error_original", 1, failing)
+        try:
+            with pytest.raises(GuardrailFailure, match="^boom$") as error:
+                llm.conditional_execution(make_request())
+        finally:
+            guardrails.deregister_llm_conditional_execution("py_llm_cond_error_original")
+
+        assert error.value is raised[0]
 
 
 class TestLLMGuardrailsAsync:
@@ -709,7 +729,7 @@ class TestLLMIntercepts:
             lambda name, request, annotated: raise_runtime_error("boom"),
         )
         try:
-            with pytest.raises(RuntimeError, match="callable failed"):
+            with pytest.raises(RuntimeError, match="^boom$"):
                 llm.request_intercepts("raise_llm", make_request())
         finally:
             intercepts.deregister_llm_request("py_llm_req_raise")
@@ -1739,7 +1759,7 @@ class TestLLMStreaming:
             lambda chunk: None,
             lambda: {},
         )
-        with pytest.raises(RuntimeError, match="__anext__"):
+        with pytest.raises(TypeError, match="expected an asynchronous iterator"):
             await anext(stream)
 
     async def test_stream_execute_handles_iterator_that_stops_in___anext__(self) -> None:
@@ -1766,6 +1786,20 @@ class TestLLMStreaming:
         with pytest.raises(RuntimeError, match="direct __anext__ boom"):
             await anext(stream)
 
+    async def test_stream_execute_propagates_cancelled_error_raised_by_iterator(self) -> None:
+        stream = await llm.stream_execute(
+            "stream_cancelled_error_llm",
+            make_request(),
+            lambda request: _CancelledAsyncIter(),
+            lambda chunk: None,
+            lambda: {},
+        )
+        with pytest.raises(asyncio.CancelledError):
+            await anext(stream)
+
+        current = asyncio.current_task()
+        assert current is not None and current.cancelling() == 0
+
     async def test_stream_execution_intercept_rejects_invalid_iterator(self) -> None:
         intercepts.register_llm_stream_execution(
             "py_llm_stream_bad_iter",
@@ -1780,7 +1814,7 @@ class TestLLMStreaming:
                 lambda chunk: None,
                 lambda: {},
             )
-            with pytest.raises(RuntimeError, match="__anext__"):
+            with pytest.raises(TypeError, match="expected an asynchronous iterator"):
                 await anext(stream)
         finally:
             intercepts.deregister_llm_stream_execution("py_llm_stream_bad_iter")
@@ -1838,7 +1872,7 @@ class TestLLMStreaming:
             failing_middleware,
         )
         try:
-            with pytest.raises(RuntimeError, match="stream intercept boom"):
+            with pytest.raises(ValueError, match="stream intercept boom"):
                 await llm.stream_execute(
                     "stream_intercept_failure_llm",
                     make_request(),
@@ -1894,7 +1928,7 @@ class TestLLMStreaming:
             raise TypeError("async stream callback boom")
 
         try:
-            with pytest.raises(RuntimeError, match="stream callback boom"):
+            with pytest.raises(ValueError, match="stream callback boom"):
                 await llm.stream_execute(
                     "stream_callback_fail_llm",
                     make_request(),
@@ -1902,7 +1936,7 @@ class TestLLMStreaming:
                     lambda chunk: None,
                     lambda: {},
                 )
-            with pytest.raises(RuntimeError, match="async stream callback boom"):
+            with pytest.raises(TypeError, match="async stream callback boom"):
                 await llm.stream_execute(
                     "async_stream_callback_fail_llm",
                     make_request(),
@@ -2018,3 +2052,11 @@ class _BrokenAsyncIter:
 
     def __anext__(self):
         raise RuntimeError("direct __anext__ boom")
+
+
+class _CancelledAsyncIter:
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        raise asyncio.CancelledError("iterator cancelled itself")

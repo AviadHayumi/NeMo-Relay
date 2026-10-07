@@ -8,6 +8,7 @@
 //! (duplicate registration, missing entity, guardrail rejection, etc.).
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -137,6 +138,13 @@ pub enum FlowError {
         message: String,
         /// Original language exception class name.
         exception_type: String,
+        /// Original binding exception when binding can carry.
+        ///
+        /// Formatting with `{:?}` or formatting the value returned
+        /// by `Error::source()` may run binding code, like acquiring the GIL.
+        /// Avoid on a thread that a GIL-holding thread is blocked waiting on.
+        #[source]
+        source: Option<Arc<dyn std::error::Error + Send + Sync + 'static>>,
     },
 }
 
