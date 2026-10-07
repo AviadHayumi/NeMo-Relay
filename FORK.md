@@ -40,13 +40,14 @@ not a moving branch, so future app changes cannot silently change this checkout.
 | Relay lifecycle and optional tool-rewrite fixes | `crates/cli/` and `integrations/coding-agents/claude-code/` |
 | Real task runner, regression report and sanitized measurements | [Relay experiments](scripts/relay-completion-check/README.md) |
 | Latest matching Relay source hashes and test results | [Core validation](scripts/relay-completion-check/CORE-VALIDATION.md) |
-| Dashboard, launcher and Kubernetes packaging | [Fleet application](https://github.com/AviadHayumi/idle-example-cc/blob/4da0c3b88c954da4e503e682d548cf88986764e9/README.md) |
-| What is actually deployed, its hashes, and real task results | [7 October cluster rollout](https://github.com/AviadHayumi/idle-example-cc/blob/4da0c3b88c954da4e503e682d548cf88986764e9/deploy/kubernetes/relay-ack-fix-20261007/README.md) |
+| Dashboard, launcher and Kubernetes packaging | [Fleet application](https://github.com/AviadHayumi/idle-example-cc/blob/258bb7e0723f8525dc2f53d6a42fe11212daad57/README.md) |
+| Runtime rollout, its hashes, and real task results | [7 October cluster rollout](https://github.com/AviadHayumi/idle-example-cc/blob/258bb7e0723f8525dc2f53d6a42fe11212daad57/deploy/kubernetes/relay-ack-fix-20261007/README.md) |
+| Latest UI deployment without restarting agents | [8 October dashboard rollout](https://github.com/AviadHayumi/idle-example-cc/blob/258bb7e0723f8525dc2f53d6a42fe11212daad57/deploy/kubernetes/web-release-20261008/README.md) |
 | Our native Rust plugin loaded inside Relay | `examples/idle-fleet/relay_activity_plugin/` |
 | Rust helper that owns launched child processes | `examples/idle-fleet/managed_exec/` |
-| Simple explanation of plugins and restart recovery | [Recovery walkthrough](https://github.com/AviadHayumi/idle-example-cc/blob/4da0c3b88c954da4e503e682d548cf88986764e9/docs/relay-plugin-recovery.md) |
-| Fixed problems, open gaps and proposed solutions | [Bug inventory](https://github.com/AviadHayumi/idle-example-cc/blob/4da0c3b88c954da4e503e682d548cf88986764e9/docs/relay-only-bug-inventory.md) |
-| Calculator story with rendered sequence diagrams | [Visual walkthrough](https://github.com/AviadHayumi/idle-example-cc/blob/4da0c3b88c954da4e503e682d548cf88986764e9/docs/calculator-relay-stories/design.md) |
+| Simple explanation of plugins and restart recovery | [Recovery walkthrough](https://github.com/AviadHayumi/idle-example-cc/blob/258bb7e0723f8525dc2f53d6a42fe11212daad57/docs/relay-plugin-recovery.md) |
+| Fixed problems, open gaps and proposed solutions | [Bug inventory](https://github.com/AviadHayumi/idle-example-cc/blob/258bb7e0723f8525dc2f53d6a42fe11212daad57/docs/relay-only-bug-inventory.md) |
+| Calculator story with rendered sequence diagrams | [Visual walkthrough](https://github.com/AviadHayumi/idle-example-cc/blob/258bb7e0723f8525dc2f53d6a42fe11212daad57/docs/calculator-relay-stories/design.md) |
 | Older research, alternative architectures and multi-harness work | `examples/idle-fleet/suggestions/` and `examples/idle-fleet/docs/` |
 
 The optional tool-input rewrite bridge is included because it was part of the
@@ -92,6 +93,15 @@ the verified source release recorded in the report; new Claude sessions default
 to Relay-only with proxy routing and do not install the process observer. Other
 harnesses retain their observer profiles. The optional tool-rewrite bridge in
 this repository is not included in that deployed artifact.
+
+On 8 October the dashboard gained the Click issue exercise, the label
+“Ready for next task,” and an explanation of unfinished child work. A separate
+static web Deployment serves these assets while APIs and events remain on the
+source-05 controller. All ten existing agent Pod identities, restart counts and
+session epochs were preserved. The UI passed 112 frontend tests; the application
+suite ran 732 Python tests with four platform skips. The live browser verified
+the exact prompt, asset hashes, API health and event streaming. This UI update
+did not change Relay, prompt-readiness rules or suspension decisions.
 
 Whole-sandbox coverage, lost native-hook reconciliation, durable response replay,
 and real Substrate checkpoint/restore remain open. Relay state currently uses
